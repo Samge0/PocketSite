@@ -77,6 +77,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
 import java.io.File
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -136,17 +137,39 @@ class AppViewModel : ViewModel() {
 
     // ---- lifecycle of a single site server ----
 
+    /** Sites with a start pending (intent fired, server not yet up). */
+    var startingSites by mutableStateOf<Set<String>>(emptySet())
+        private set
+
     fun startSite(ctx: Context, name: String) {
+        if (name in startingSites || SiteServerService.isRunning(name)) return
         val site = sites.firstOrNull { it.name == name } ?: return
         val port = SitesRepository.sitePort(ctx, name)
+        startingSites = startingSites + name
         val intent =
             Intent(ctx, SiteServerService::class.java)
                 .setAction(SiteServerService.ACTION_START_SITE)
                 .putExtra(SiteServerService.EXTRA_SITE, name)
                 .putExtra(SiteServerService.EXTRA_PORT, port)
         ctx.startForegroundService(intent)
-        refresh(ctx)
-        toast("已启动 $name · 端口 $port")
+        // poll until the socket is actually accepting, then clear pending state
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            val deadline = System.currentTimeMillis() + 8000
+            var up = false
+            while (System.currentTimeMillis() < deadline) {
+                if (SiteServerService.isRunning(name)) {
+                    up = true
+                    break
+                }
+                kotlinx.coroutines.delay(150)
+            }
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                startingSites = startingSites - name
+                refresh(ctx)
+                if (up) toast("$name 已就绪 · 端口 $port")
+                else toast("$name 启动超时，请重试")
+            }
+        }
     }
 
     fun stopSite(ctx: Context, name: String) {
@@ -155,6 +178,7 @@ class AppViewModel : ViewModel() {
                 .setAction(SiteServerService.ACTION_STOP_SITE)
                 .putExtra(SiteServerService.EXTRA_SITE, name)
         ctx.startService(intent)
+        startingSites = startingSites - name
         refresh(ctx)
     }
 
@@ -429,6 +453,7 @@ fun HomeScreen(vm: AppViewModel) {
                 items(vm.sites, key = { it.name }) { site ->
                     SiteRow(
                         site = site,
+                        starting = site.name in vm.startingSites,
                         onClick = { vm.openDetail(ctx, site.name) },
                         onPreview = {
                             val intent =
@@ -598,6 +623,7 @@ fun ImportOption(title: String, desc: String, onClick: () -> Unit) {
 @Composable
 fun SiteRow(
     site: SiteInfo,
+    starting: Boolean,
     onClick: () -> Unit,
     onPreview: () -> Unit,
     onBrowser: () -> Unit,
@@ -611,8 +637,16 @@ fun SiteRow(
         animationSpec = infiniteRepeatable(tween(1100), RepeatMode.Reverse),
         label = "glow",
     )
+    val busy = starting
     Card(
-        colors = CardDefaults.cardColors(containerColor = if (site.running) Card1 else Card0),
+        colors =
+            CardDefaults.cardColors(
+                containerColor = when {
+                    site.running -> Card1
+                    busy -> Color(0xFF182740)
+                    else -> Card0
+                },
+            ),
         shape = RoundedCornerShape(20.dp),
         modifier = Modifier.fillMaxWidth().animateContentSize().clickable(onClick = onClick),
     ) {
@@ -624,10 +658,10 @@ fun SiteRow(
                         .size(42.dp)
                         .clip(RoundedCornerShape(13.dp))
                         .background(
-                            if (site.running) {
-                                Brush.linearGradient(listOf(MintDeep, Mint))
-                            } else {
-                                Brush.linearGradient(listOf(Card1, Stroke))
+                            when {
+                                site.running -> Brush.linearGradient(listOf(MintDeep, Mint))
+                                busy -> Brush.linearGradient(listOf(Color(0xFF1D6A5E), Color(0xFF2AA795)))
+                                else -> Brush.linearGradient(listOf(Card1, Stroke))
                             },
                         ),
                     contentAlignment = Alignment.Center,
@@ -635,7 +669,7 @@ fun SiteRow(
                     Text(
                         site.name.take(1).uppercase(),
                         fontSize = 17.sp,
-                        color = if (site.running) Color(0xFF04211B) else TextMid,
+                        color = if (site.running || busy) Color(0xFF04211B) else TextMid,
                     )
                 }
                 Spacer(Modifier.width(12.dp))
@@ -649,17 +683,39 @@ fun SiteRow(
                     )
                     Spacer(Modifier.height(2.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            Modifier
-                                .size(7.dp)
-                                .scale(if (site.running) glow else 1f)
-                                .background(if (site.running) Mint else TextLow, CircleShape),
-                        )
+                        when {
+                            site.running -> {
+                                Box(
+                                    Modifier
+                                        .size(7.dp)
+                                        .scale(glow)
+                                        .background(Mint, CircleShape),
+                                )
+                            }
+                            busy -> {
+                                CircularProgressIndicator(
+                                    color = Mint,
+                                    strokeWidth = 1.8.dp,
+                                    modifier = Modifier.size(9.dp),
+                                )
+                            }
+                            else -> {
+                                Box(Modifier.size(7.dp).background(TextLow, CircleShape))
+                            }
+                        }
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            if (site.running) "运行中 · :${site.port}" else "已停止 · :${site.port}",
+                            when {
+                                site.running -> "运行中 · :${site.port}"
+                                busy -> "启动中 · :${site.port}"
+                                else -> "已停止 · :${site.port}"
+                            },
                             fontSize = 12.sp,
-                            color = if (site.running) Mint else TextMid,
+                            color = when {
+                                site.running -> Mint
+                                busy -> Sky
+                                else -> TextMid
+                            },
                         )
                         if (!site.hasIndex) {
                             Spacer(Modifier.width(8.dp))
@@ -669,14 +725,17 @@ fun SiteRow(
                 }
                 // start/stop switch
                 Switch(
-                    checked = site.running,
+                    checked = site.running || busy,
                     onCheckedChange = { onToggle(it) },
+                    enabled = !busy,
                     colors =
                         SwitchDefaults.colors(
-                            checkedTrackColor = MintDeep,
-                            checkedThumbColor = Color(0xFF04211B),
+                            checkedTrackColor = if (busy) Color(0xFF1D6A5E) else MintDeep,
+                            checkedThumbColor = if (busy) Color(0xFF9CCFC5) else Color(0xFF04211B),
                             uncheckedTrackColor = Stroke,
                             uncheckedThumbColor = TextLow,
+                            disabledCheckedTrackColor = Color(0xFF1D6A5E),
+                            disabledCheckedThumbColor = Color(0xFF9CCFC5),
                         ),
                     modifier = Modifier.size(42.dp, 26.dp),
                 )
@@ -777,24 +836,46 @@ fun DetailScreen(vm: AppViewModel) {
                                 }
                             }
                             Spacer(Modifier.height(16.dp))
+                            val detailBusy = site.name in vm.startingSites
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
                                     Text("启动站点", fontSize = 15.sp, color = TextHi)
-                                    Text(
-                                        if (site.running) "http://127.0.0.1:${site.port}" else "停止状态",
-                                        fontSize = 12.sp,
-                                        color = if (site.running) Mint else TextLow,
-                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (detailBusy) {
+                                            CircularProgressIndicator(
+                                                color = Mint,
+                                                strokeWidth = 2.dp,
+                                                modifier = Modifier.size(12.dp),
+                                            )
+                                            Spacer(Modifier.width(7.dp))
+                                        }
+                                        Text(
+                                            when {
+                                                site.running -> "http://127.0.0.1:${site.port}"
+                                                detailBusy -> "正在启动，请稍候…"
+                                                else -> "停止状态"
+                                            },
+                                            fontSize = 12.sp,
+                                            color = when {
+                                                site.running -> Mint
+                                                detailBusy -> Sky
+                                                else -> TextLow
+                                            },
+                                        )
+                                    }
                                 }
                                 Switch(
-                                    checked = site.running,
+                                    checked = site.running || detailBusy,
                                     onCheckedChange = { on ->
                                         if (on) vm.startSite(ctx, site.name) else vm.stopSite(ctx, site.name)
                                     },
+                                    enabled = !detailBusy,
                                     colors =
                                         SwitchDefaults.colors(
-                                            checkedTrackColor = MintDeep,
-                                            checkedThumbColor = Color(0xFF04211B),
+                                            checkedTrackColor = if (detailBusy) Color(0xFF1D6A5E) else MintDeep,
+                                            checkedThumbColor = if (detailBusy) Color(0xFF9CCFC5) else Color(0xFF04211B),
+                                            disabledCheckedTrackColor = Color(0xFF1D6A5E),
+                                            disabledCheckedThumbColor = Color(0xFF9CCFC5),
                                         ),
                                 )
                             }

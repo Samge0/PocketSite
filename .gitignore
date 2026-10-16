@@ -1,0 +1,31 @@
+# Gradle
+.gradle/
+build/
+app/build/
+**/build/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+local.properties
+
+# Kotlin/Java
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# Native / logs
+*.log
+captures/
+.externalNativeBuild/
+.cxx/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# APK outputs (build artifacts, not source)
+*.apk
+!app/src/main/assets/*.zip

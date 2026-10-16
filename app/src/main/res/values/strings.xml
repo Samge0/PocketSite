@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PocketSite</string>
+    <string name="server_card">静态站点服务器</string>
+    <string name="start">启动</string>
+    <string name="stop">停止</string>
+    <string name="open_browser">浏览器访问</string>
+    <string name="running">运行中</string>
+    <string name="stopped">已停止</string>
+    <string name="port">端口</string>
+    <string name="sites_card">站点列表</string>
+    <string name="import_zip">导入 ZIP 文件</string>
+    <string name="import_url">从 URL 拉取</string>
+    <string name="delete">删除</string>
+    <string name="root_card">站点根目录</string>
+    <string name="change_dir">更改目录</string>
+    <string name="back_private">迁回应用目录</string>
+    <string name="active">当前站点</string>
+    <string name="autostart">打开应用时自动启动服务器</string>
+    <string name="url_hint">https://example.com/site.zip</string>
+    <string name="confirm">确认</string>
+    <string name="cancel">取消</string>
+    <string name="copy">复制</string>
+</resources>

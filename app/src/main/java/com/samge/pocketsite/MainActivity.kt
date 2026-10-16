@@ -250,17 +250,30 @@ class AppViewModel : ViewModel() {
 
 @Composable
 fun RootNav(vm: AppViewModel = viewModel()) {
+    val ctx = LocalContext.current
+
+    // system back / gesture: pop to home instead of exiting the app
+    androidx.activity.compose.BackHandler(enabled = vm.screen != Screen.HOME) {
+        vm.screen = Screen.HOME
+    }
+
     when (vm.screen) {
         Screen.HOME -> HomeScreen(vm)
         Screen.DETAIL -> DetailScreen(vm)
         Screen.SETTINGS -> SettingsScreen(vm)
     }
     // global toast
-    val ctx = LocalContext.current
     LaunchedEffect(vm.toast) {
         if (vm.toast != null) {
             kotlinx.coroutines.delay(2800)
             vm.toast = null
+        }
+    }
+    // first launch: autostart sites marked 随应用启动
+    LaunchedEffect(Unit) {
+        vm.refresh(ctx)
+        SitesRepository.autostartSites(ctx).forEach { name ->
+            vm.startSite(ctx, name)
         }
     }
     // periodic refresh of running states
@@ -270,6 +283,26 @@ fun RootNav(vm: AppViewModel = viewModel()) {
             vm.refresh(ctx)
         }
     }
+
+    // delete confirm — global so it opens over whichever screen triggered it
+    vm.confirmDelete?.let { name ->
+        AlertDialog(
+            onDismissRequest = { vm.confirmDelete = null },
+            containerColor = Card1,
+            titleContentColor = TextHi,
+            textContentColor = TextMid,
+            title = { Text("删除站点？") },
+            text = { Text("「$name」及其端口设置将被删除，此操作不可撤销。") },
+            confirmButton = {
+                Button(
+                    onClick = { vm.deleteSite(ctx, name) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Rose, contentColor = Color(0xFF2B0B12)),
+                ) { Text("删除") }
+            },
+            dismissButton = { TextButton(onClick = { vm.confirmDelete = null }) { Text("取消", color = TextMid) } },
+        )
+    }
+
     // global busy overlay
     if (vm.busy) {
         Box(
@@ -541,25 +574,6 @@ fun HomeScreen(vm: AppViewModel) {
                     ) { Text("拉取") }
                 },
                 dismissButton = { TextButton(onClick = { vm.showUrlDialog = false }) { Text("取消", color = TextMid) } },
-            )
-        }
-
-        // ---- delete confirm ----
-        vm.confirmDelete?.let { name ->
-            AlertDialog(
-                onDismissRequest = { vm.confirmDelete = null },
-                containerColor = Card1,
-                titleContentColor = TextHi,
-                textContentColor = TextMid,
-                title = { Text("删除站点？") },
-                text = { Text("「$name」及其端口设置将被删除，此操作不可撤销。") },
-                confirmButton = {
-                    Button(
-                        onClick = { vm.deleteSite(ctx, name) },
-                        colors = ButtonDefaults.buttonColors(containerColor = Rose, contentColor = Color(0xFF2B0B12)),
-                    ) { Text("删除") }
-                },
-                dismissButton = { TextButton(onClick = { vm.confirmDelete = null }) { Text("取消", color = TextMid) } },
             )
         }
     }

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>站点包格式说明</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "HarmonyOS Sans SC", "MiSans", sans-serif;
+    background: #0C1526; color: #EAF2FC;
+    padding: 24px 18px 90px; line-height: 1.65; font-size: 15px;
+  }
+  h1 { font-size: 21px; margin-bottom: 6px; }
+  .sub { color: #93A7C8; font-size: 12.5px; margin-bottom: 22px; }
+  .rule {
+    display: flex; align-items: flex-start; gap: 12px;
+    background: #111C30; border: 1px solid #20304C; border-radius: 14px;
+    padding: 14px 15px; margin-bottom: 12px;
+  }
+  .num {
+    flex: 0 0 26px; height: 26px; border-radius: 9px;
+    background: linear-gradient(135deg, #14B8A6, #5EEAD4); color: #04211B;
+    font-weight: 700; font-size: 14px; display: flex; align-items: center; justify-content: center;
+    margin-top: 2px;
+  }
+  .rule b { display: block; margin-bottom: 2px; font-size: 14.5px; }
+  .rule p { color: #93A7C8; font-size: 12.5px; }
+  .rule code {
+    background: #0A1120; border: 1px solid #20304C; border-radius: 5px;
+    padding: 1px 6px; font-size: 12px; color: #7DD3FC; font-family: monospace;
+  }
+  h2 {
+    font-size: 15px; color: #5EEAD4; margin: 26px 0 12px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  h2::before { content: ""; width: 4px; height: 15px; border-radius: 2px; background: #14B8A6; }
+  pre {
+    background: #0A1120; border: 1px solid #20304C; border-radius: 14px;
+    padding: 16px 14px; font-family: "JetBrains Mono", Menlo, monospace;
+    font-size: 12.5px; line-height: 1.8; color: #C9D8F0; overflow-x: auto;
+    margin-bottom: 10px;
+  }
+  .ok   { color: #5EEAD4; }
+  .warn { color: #FBBF24; }
+  .dim  { color: #5C7095; }
+  .dir  { color: #7DD3FC; }
+  .tag {
+    display: inline-block; border-radius: 6px; padding: 1px 8px;
+    font-size: 11px; margin-left: 6px; vertical-align: 1px;
+  }
+  .tag.ok   { background: rgba(94,234,212,.13); color: #5EEAD4; }
+  .tag.warn { background: rgba(251,191,36,.13); color: #FBBF24; }
+  .treewrap { position: relative; }
+  .arrow {
+    position: absolute; right: 14px; top: 18px;
+    color: #5EEAD4; font-size: 12px;
+  }
+  .note {
+    border-left: 3px solid #14B8A6; background: rgba(20,184,166,.07);
+    border-radius: 0 12px 12px 0; padding: 12px 14px; font-size: 12.5px;
+    color: #93A7C8; margin: 14px 0 4px;
+  }
+  .note b { color: #EAF2FC; }
+</style>
+</head>
+<body>
+  <h1>站点包格式说明</h1>
+  <div class="sub">PocketSite 可导入的标准静态站点 ZIP 包</div>
+
+  <div class="rule"><div class="num">1</div><div>
+    <b>一个合法的 .zip 文件</b>
+    <p>标准的 ZIP 压缩包，无需重命名，直接选择即可导入。</p>
+  </div></div>
+
+  <div class="rule"><div class="num">2</div><div>
+    <b>包内必须有 <code>index.html</code></b>
+    <p>它是站点的入口页面，位于「有效根目录」。缺失时站点标记为 <span class="warn">无 index</span>，打开会 404。</p>
+  </div></div>
+
+  <div class="rule"><div class="num">3</div><div>
+    <b>纯静态内容</b>
+    <p>HTML / CSS / JS / 图片 / 字体 / 音视频均可；不支持 PHP、Node 等服务端程序。</p>
+  </div></div>
+
+  <h2>✓ 推荐结构：index 在 ZIP 根部</h2>
+  <div class="treewrap">
+  <pre>site.zip
+├── <span class="ok">index.html</span>      <span class="tag ok">必需 · 入口</span>
+├── css/
+│   └── style.css
+├── js/
+│   └── main.js
+└── images/
+    └── logo.png</pre>
+  </div>
+
+  <h2>✓ 也支持：外面多包一层文件夹</h2>
+  <div class="treewrap">
+  <pre>site.zip
+└── <span class="dir">mysite/</span>          <span class="tag ok">自动识别并提升</span>
+    ├── <span class="ok">index.html</span>
+    ├── css/
+    └── images/</pre>
+  </div>
+  <div class="note">导入时会自动检测：若 ZIP 内只有一个文件夹且其中有 <b>index.html</b>，会把该文件夹内容<b>提升为站点根目录</b>，无需手动解压调整。macOS 压缩产生的 <b>__MACOSX</b>、<b>._*</b> 垃圾文件也会自动忽略。</div>
+
+  <h2>✗ 常见错误示例</h2>
+  <pre>site.zip
+├── page1.html      <span class="tag warn">缺 index.html</span>
+├── page2.html
+└── css/</pre>
+  <div class="note"><b>问题：</b>两个平级页面没有 index.html，且不在同一子文件夹内，无法自动提升。<b>修复：</b>把入口页面重命名为 <b>index.html</b> 后重新打包。</div>
+
+  <h2>打包小技巧</h2>
+  <div class="rule"><div class="num">💡</div><div>
+    <b>选中「内容」打包，而不是「外层文件夹」</b>
+    <p>Windows：进入文件夹 → 全选（Ctrl+A）→ 右键压缩。<br>macOS：选中内容 → 右键「压缩」。两种都会得到入口在根部的标准包。</p>
+  </div></div>
+  <div class="rule"><div class="num">💡</div><div>
+    <b>路径建议用英文</b>
+    <p>HTML 内引用相对路径（<code>./css/style.css</code>）最稳妥；资源文件名避免空格与中文，防止部分设备解码异常。</p>
+  </div></div>
+  <div class="rule"><div class="num">💡</div><div>
+    <b>相对路径引用资源</b>
+    <p>站点通过 <b>http://127.0.0.1:端口/</b> 直接伺服 ZIP 根目录，index.html 里写 <code>./xxx</code> 或 <code>xxx/yyy</code> 的相对引用即可正常加载。</p>
+  </div></div>
+</body>
+</html>

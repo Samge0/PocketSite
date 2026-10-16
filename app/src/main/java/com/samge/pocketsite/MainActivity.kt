@@ -67,15 +67,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
+import android.webkit.WebView
 import java.io.File
 import kotlinx.coroutines.launch
 
@@ -107,6 +108,9 @@ class AppViewModel : ViewModel() {
     var showImportSheet by mutableStateOf(false)
     var showUrlDialog by mutableStateOf(false)
     var confirmDelete by mutableStateOf<String?>(null)
+    var showUpdateSheet by mutableStateOf(false)
+    var showUpdateUrlDialog by mutableStateOf(false)
+    var showGuide by mutableStateOf(false)
 
     // detail state
     var detailAutostart by mutableStateOf(false)
@@ -221,6 +225,19 @@ class AppViewModel : ViewModel() {
         }
     }
 
+    /** Update existing site content from URL (keeps port/autostart prefs). */
+    fun updateSiteFromUrl(ctx: Context, name: String, url: String) {
+        busy = true
+        busyPhase = "下载新版本包"
+        busyPercent = 0
+        SitesRepository.importUrlAsync(ctx, url, name, { p -> busyPercent = p }) { ok, msg ->
+            busy = false
+            busyPercent = -1
+            toast(msg)
+            refresh(ctx)
+        }
+    }
+
     fun deleteSite(ctx: Context, name: String) {
         confirmDelete = null
         if (SiteServerService.isRunning(name)) stopSite(ctx, name)
@@ -325,6 +342,34 @@ fun RootNav(vm: AppViewModel = viewModel()) {
             },
             dismissButton = { TextButton(onClick = { vm.confirmDelete = null }) { Text("取消", color = TextMid) } },
         )
+    }
+
+    // packaging guide in in-app webview (local asset, works offline)
+    if (vm.showGuide) {
+        Box(Modifier.fillMaxSize()) {
+            AndroidView(
+                factory = { c ->
+                    WebView(c).apply {
+                        settings.javaScriptEnabled = true
+                        setBackgroundColor(0xFF0C1526.toInt())
+                        loadUrl("file:///android_asset/packaging-guide.html")
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+            // floating close
+            Button(
+                onClick = { vm.showGuide = false },
+                modifier =
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(18.dp)
+                        .size(46.dp),
+                shape = CircleShape,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xE65EEAD4), contentColor = Color(0xFF04211B)),
+                contentPadding = PaddingValues(0.dp),
+            ) { Text("✕", fontSize = 16.sp) }
+        }
     }
 
     // global busy overlay
@@ -524,9 +569,27 @@ fun HomeScreen(vm: AppViewModel) {
                     modifier = Modifier.fillMaxWidth().clickable(enabled = false) {},
                 ) {
                     Column(Modifier.padding(24.dp)) {
-                        Text("导入站点", color = TextHi, fontSize = 17.sp)
-                        Spacer(Modifier.height(4.dp))
-                        Text("选择站点包来源", color = TextLow, fontSize = 12.sp)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("导入站点", color = TextHi, fontSize = 17.sp)
+                                Spacer(Modifier.height(4.dp))
+                                Text("选择站点包来源", color = TextLow, fontSize = 12.sp)
+                            }
+                            // guide button: what is a valid site zip?
+                            Box(
+                                Modifier
+                                    .size(34.dp)
+                                    .clip(CircleShape)
+                                    .background(Card0)
+                                    .clickable {
+                                        vm.showImportSheet = false
+                                        vm.showGuide = true
+                                    },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text("?", fontSize = 16.sp, color = Sky)
+                            }
+                        }
                         Spacer(Modifier.height(16.dp))
                         ImportOption(
                             title = "从本地 ZIP 导入",
@@ -957,7 +1020,7 @@ fun DetailScreen(vm: AppViewModel) {
                         Spacer(Modifier.height(8.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             GhostButton("更新包", Modifier.weight(1f).height(42.dp)) {
-                                updatePicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+                                vm.showUpdateSheet = true
                             }
                             Button(
                                 onClick = { vm.confirmDelete = site.name },
@@ -970,6 +1033,88 @@ fun DetailScreen(vm: AppViewModel) {
                 }
             }
         }
+    }
+
+    // update-source chooser sheet (same pattern as home import)
+    if (vm.showUpdateSheet) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color(0x8804070D))
+                .clickable { vm.showUpdateSheet = false },
+            contentAlignment = Alignment.BottomCenter,
+        ) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Card1),
+                shape = RoundedCornerShape(24.dp, 24.dp, 0.dp, 0.dp),
+                modifier = Modifier.fillMaxWidth().clickable(enabled = false) {},
+            ) {
+                Column(Modifier.padding(24.dp)) {
+                    Text("更新站点包", color = TextHi, fontSize = 17.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text("「${vm.detailSite}」的内容将被覆盖，端口与设置保留", color = TextLow, fontSize = 12.sp)
+                    Spacer(Modifier.height(16.dp))
+                    ImportOption(
+                        title = "从本地 ZIP 更新",
+                        desc = "选择手机中的 .zip 站点包",
+                        onClick = {
+                            vm.showUpdateSheet = false
+                            updatePicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+                        },
+                    )
+                    HorizontalDivider(color = Stroke)
+                    ImportOption(
+                        title = "从 URL 拉取更新",
+                        desc = "输入链接在线下载新版本包",
+                        onClick = {
+                            vm.showUpdateSheet = false
+                            vm.showUpdateUrlDialog = true
+                        },
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+            }
+        }
+    }
+
+    // update-from-url dialog
+    if (vm.showUpdateUrlDialog) {
+        var urlText by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { vm.showUpdateUrlDialog = false },
+            containerColor = Card1,
+            titleContentColor = TextHi,
+            textContentColor = TextMid,
+            title = { Text("从 URL 拉取新版本包") },
+            text = {
+                Column {
+                    Text("更新目标：${vm.detailSite}", fontSize = 12.sp, color = Mint)
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = urlText,
+                        onValueChange = { urlText = it },
+                        label = { Text("ZIP 链接") },
+                        placeholder = { Text("https://example.com/site.zip", color = TextLow) },
+                        singleLine = true,
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val u = urlText.trim()
+                        if (u.startsWith("http")) {
+                            vm.showUpdateUrlDialog = false
+                            vm.updateSiteFromUrl(ctx, vm.detailSite, u)
+                        } else {
+                            vm.toast("请输入 http(s) 链接")
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MintDeep, contentColor = Color(0xFF04211B)),
+                ) { Text("拉取") }
+            },
+            dismissButton = { TextButton(onClick = { vm.showUpdateUrlDialog = false }) { Text("取消", color = TextMid) } },
+        )
     }
 }
 

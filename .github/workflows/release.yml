@@ -1,0 +1,90 @@
+name: Release APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6.0.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6.3.0
+
+      - name: Extract version from tag
+        id: ver
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build signed release APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Verify signing
+        run: |
+          $ANDROID_HOME/build-tools/35.0.0/apksigner verify --print-certs \
+            app/build/outputs/apk/release/app-release.apk
+
+      - name: Rename APK with version
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk \
+             PocketSite-v${{ steps.ver.outputs.VERSION }}.apk
+
+      - name: Prepare sample site package
+        run: |
+          mkdir -p sample
+          cat > sample/index.html <<'HTML'
+          <!DOCTYPE html>
+          <html lang="zh-CN">
+          <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Hello PocketSite</title>
+          <style>
+            :root { color-scheme: dark; }
+            body { margin:0; min-height:100vh; display:grid; place-items:center;
+                   background:#0C1526; color:#EAF2FC; font-family:sans-serif; text-align:center; }
+            h1 { font-size:2rem; margin:0 0 8px;
+                 background:linear-gradient(90deg,#14B8A6,#7DD3FC);
+                 -webkit-background-clip:text; background-clip:text; color:transparent; }
+            p { color:#93A7C8; margin:4px 0; }
+            code { background:#111C30; border:1px solid #20304C; border-radius:6px; padding:2px 8px; color:#7DD3FC; }
+          </style>
+          </head>
+          <body>
+          <div>
+            <h1>Hello PocketSite</h1>
+            <p>这是一个示例静态站点包。</p>
+            <p>解压后可直接通过「导入 ZIP」部署到 PocketSite。</p>
+            <p>入口文件：<code>index.html</code></p>
+          </div>
+          </body>
+          </html>
+          HTML
+          cd sample && zip -q ../sample-site.zip index.html && cd ..
+          ls -la sample-site.zip
+
+      - name: Create GitHub Release and upload artifacts
+        uses: softprops/action-gh-release@v3.0.3
+        with:
+          files: |
+            PocketSite-v${{ steps.ver.outputs.VERSION }}.apk
+            sample-site.zip
+          generate_release_notes: true
+          make_latest: true

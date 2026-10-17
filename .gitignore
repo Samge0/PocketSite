@@ -26,6 +26,10 @@ captures/
 Thumbs.db
 desktop.ini
 
+# signing secrets (local fallback; CI uses GitHub secrets)
+app/pocketsite-release.jks
+.secrets/
+
 # APK outputs (build artifacts, not source)
 *.apk
 !app/src/main/assets/*.zip

@@ -238,6 +238,12 @@ object SitesRepository {
         if (!zipFile.isFile || zipFile.length() == 0L) return false to "ZIP 不存在或为空"
         val name = sanitizeName(rawName)
         if (name.isEmpty()) return false to "站点名无效"
+        val wasRunning = SiteServerService.isRunning(name)
+        if (wasRunning) {
+            // stop first so we're not deleting files a live server is serving
+            SiteServerService.stopSiteStatic(ctx, name)
+            Thread.sleep(300) // give the accept thread a moment to release fds
+        }
         val root = rootDir(ctx)
         val dest = File(root, name)
         val staging = File(root, ".$name.tmp")
@@ -279,6 +285,10 @@ object SitesRepository {
             // ensure port exists for new sites
             sitePort(ctx, name)
             if (!keepPrefs && activeSite(ctx).isEmpty()) setActiveSite(ctx, name)
+            // if the site was running before the update, bring it back up on the new content
+            if (wasRunning) {
+                SiteServerService.startSiteStatic(ctx, name, sitePort(ctx, name))
+            }
             return true to "已导入 $name（${humanSize(total)}，端口 ${sitePort(ctx, name)}）"
         } catch (e: Exception) {
             staging.deleteRecursively()
@@ -372,6 +382,15 @@ object SitesRepository {
                         val oldRoot = rootDir(ctx)
                         if (oldRoot.canonicalPath == newRoot.canonicalPath) {
                             return@withContext true to "目录未变化"
+                        }
+                        // guard: newRoot inside oldRoot (or the reverse) would make the
+                        // final oldRoot.deleteRecursively() eat the migrated data
+                        val oldCanon = oldRoot.canonicalPath + File.separator
+                        val newCanon = newRoot.canonicalPath + File.separator
+                        if (newRoot.canonicalPath.startsWith(oldCanon) ||
+                            oldRoot.canonicalPath.startsWith(newCanon)
+                        ) {
+                            return@withContext false to "目标目录与当前目录存在嵌套关系，无法迁移（原目录保留）"
                         }
                         newRoot.mkdirs()
                         val res = Migrator.migrate(oldRoot, newRoot, onProgress)

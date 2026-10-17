@@ -33,6 +33,24 @@ class SiteServerService : Service() {
         fun runningCount(): Int = servers.size
 
         fun portOf(site: String): Int? = servers[site]?.let { if (it.isRunning) it.port else null }
+
+        /** Static helpers callable from anywhere (post Intents to the service). */
+        fun stopSiteStatic(ctx: android.content.Context, site: String) {
+            val intent =
+                android.content.Intent(ctx, SiteServerService::class.java)
+                    .setAction(ACTION_STOP_SITE)
+                    .putExtra(EXTRA_SITE, site)
+            ctx.startService(intent)
+        }
+
+        fun startSiteStatic(ctx: android.content.Context, site: String, port: Int) {
+            val intent =
+                android.content.Intent(ctx, SiteServerService::class.java)
+                    .setAction(ACTION_START_SITE)
+                    .putExtra(EXTRA_SITE, site)
+                    .putExtra(EXTRA_PORT, port)
+            ctx.startForegroundService(intent)
+        }
     }
 
     override fun onCreate() {

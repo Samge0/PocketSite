@@ -90,6 +90,15 @@ class StaticSiteServer(
             val rel = decoded.trimStart('/')
             var file = File(rootDir, rel)
 
+            // path-traversal guard: resolved path must stay inside rootDir
+            // (double-decoded ../ or absolute escapes are rejected)
+            if (!file.canonicalPath.startsWith(rootDir.canonicalPath + File.separator) &&
+                file.canonicalPath != rootDir.canonicalPath
+            ) {
+                sendText(out, 403, "text/html; charset=utf-8", notFoundPage(rel))
+                return
+            }
+
             if (file.isDirectory) {
                 val idx = File(file, "index.html")
                 if (idx.isFile) file = idx else {

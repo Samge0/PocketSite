@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PocketSite — 手机端的静态站点管理器</title>
+<meta name="description" content="PocketSite：把多个静态站点装进口袋。内嵌纯 Kotlin 手写的 HTTP 服务器，每站点独立端口、独立开关、可同时运行，飞行模式照常工作。轻量单 APK，Android 8.0+，MIT 开源。">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        night: '#070D18',
+        deep:  '#0C1526',
+        card:  '#111C30',
+        card2: '#15223A',
+        edge:  '#20304C',
+        mint:  '#5EEAD4',
+        teal:  '#14B8A6',
+        skyc:  '#7DD3FC',
+        honey: '#FBBF24',
+        coral: '#FB7185',
+        ink:   '#EAF2FC',
+        mist:  '#93A7C8',
+        dim:   '#5C7095'
+      },
+      fontFamily: {
+        sans: ['Inter','Noto Sans SC','system-ui','sans-serif'],
+        mono: ['JetBrains Mono','Noto Sans SC','monospace']
+      }
+    }
+  }
+}
+</script>
+<style>
+  html { scroll-behavior: smooth; }
+  body { background: #070D18; }
+  ::selection { background: rgba(94,234,212,.28); color: #EAF2FC; }
+
+  a:focus-visible, button:focus-visible, summary:focus-visible {
+    outline: 2px solid #5EEAD4; outline-offset: 3px; border-radius: 6px;
+  }
+
+  /* 滚动入场 */
+  .reveal { opacity: 0; transform: translateY(20px); transition: opacity .7s cubic-bezier(.16,1,.3,1), transform .7s cubic-bezier(.16,1,.3,1); }
+  .reveal.in-view { opacity: 1; transform: none; }
+
+  /* 网格与辉光背景 */
+  .bg-grid {
+    background-image:
+      linear-gradient(rgba(94,234,212,.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(94,234,212,.045) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: radial-gradient(ellipse 80% 70% at 50% 30%, black 40%, transparent 100%);
+    -webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 30%, black 40%, transparent 100%);
+  }
+  .glow { position: absolute; border-radius: 9999px; filter: blur(90px); pointer-events: none; }
+
+  /* 呼吸状态灯 */
+  @keyframes breathe {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(94,234,212,.45); }
+    50%      { box-shadow: 0 0 0 7px rgba(94,234,212,0); }
+  }
+  .breathe { animation: breathe 2.4s ease-in-out infinite; }
+
+  /* 悬浮徽章缓浮 */
+  @keyframes floaty { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
+  .floaty { animation: floaty 6s ease-in-out infinite; }
+
+  /* FAQ 手风琴 */
+  summary::-webkit-details-marker { display: none; }
+  summary { list-style: none; cursor: pointer; }
+  details .chev { transition: transform .3s ease; }
+  details[open] .chev { transform: rotate(180deg); }
+  details[open] { background: rgba(94,234,212,.03); }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #20304C; border-radius: 8px; }
+  ::-webkit-scrollbar-track { background: #0C1526; }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .reveal { opacity: 1; transform: none; transition: none; }
+    .breathe, .floaty { animation: none; }
+  }
+</style>
+</head>
+<body class="bg-night text-ink font-sans antialiased leading-relaxed">
+
+<!-- ======= SVG 符号库（logo 全站复用） ======= -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="logo-mark" viewBox="0 0 32 32" fill="none">
+    <circle cx="14.5" cy="14.5" r="10.5" stroke="#5EEAD4" stroke-width="2"/>
+    <ellipse cx="14.5" cy="14.5" rx="4.6" ry="10.5" stroke="#5EEAD4" stroke-width="1.4" opacity=".55"/>
+    <path d="M4 14.5h21" stroke="#5EEAD4" stroke-width="1.4" opacity=".55"/>
+    <circle cx="23" cy="23" r="7.5" fill="#14B8A6" stroke="#070D18" stroke-width="2"/>
+    <path d="M19.8 23.1l2.1 2.1 4.1-4.5" stroke="#070D18" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none">
+    <path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none">
+    <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24" fill="none">
+    <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/>
+    <path d="M12 7.5v5.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+    <circle cx="12" cy="16.6" r="1.2" fill="currentColor"/>
+  </symbol>
+  <symbol id="i-dash" viewBox="0 0 24 24" fill="none">
+    <path d="M6 12h12" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
+  </symbol>
+</svg>
+
+<!-- ======= 顶部导航 ======= -->
+<header class="fixed top-0 inset-x-0 z-50 border-b border-edge/60 bg-night/75 backdrop-blur-xl">
+  <nav class="mx-auto flex h-16 max-w-6xl items-center justify-between px-5 md:px-6">
+    <a href="#top" class="flex items-center gap-2.5">
+      <svg class="h-7 w-7"><use href="#logo-mark"/></svg>
+      <span class="text-lg font-bold tracking-tight">PocketSite</span>
+    </a>
+    <div class="hidden items-center gap-7 text-sm text-mist md:flex">
+      <a href="#why" class="transition-colors hover:text-mint">为什么</a>
+      <a href="#features" class="transition-colors hover:text-mint">特性</a>
+      <a href="#start" class="transition-colors hover:text-mint">快速上手</a>
+      <a href="#compare" class="transition-colors hover:text-mint">对比</a>
+      <a href="#faq" class="transition-colors hover:text-mint">FAQ</a>
+      <a href="https://github.com/Samge0/PocketSite" target="_blank" rel="noopener" class="transition-colors hover:text-mint">GitHub</a>
+    </div>
+    <a href="https://github.com/Samge0/PocketSite/releases" target="_blank" rel="noopener"
+       class="rounded-full bg-gradient-to-r from-mint to-teal px-4 py-2 text-sm font-bold text-night transition-all hover:opacity-90 hover:shadow-[0_0_24px_rgba(94,234,212,.35)]">
+      下载 APK
+    </a>
+  </nav>
+</header>
+
+<main id="top">
+
+<!-- ======= Hero ======= -->
+<section class="relative overflow-hidden pt-32 pb-20 md:pt-40 md:pb-28">
+  <div class="bg-grid absolute inset-0" aria-hidden="true"></div>
+  <div class="glow left-[-10%] top-[-10%] h-[420px] w-[420px] bg-mint/10" aria-hidden="true"></div>
+  <div class="glow right-[-8%] bottom-[-20%] h-[460px] w-[460px] bg-teal/10" aria-hidden="true"></div>
+  <div class="glow right-[18%] top-[8%] h-[260px] w-[260px] bg-skyc/[.07]" aria-hidden="true"></div>
+
+  <div class="relative mx-auto grid max-w-6xl items-center gap-16 px-5 md:px-6 lg:grid-cols-[1.05fr_.95fr]">
+    <!-- 左：文案 -->
+    <div>
+      <div class="reveal mb-6 inline-flex items-center gap-2 rounded-full border border-edge bg-card/70 px-3.5 py-1.5 text-xs text-mist">
+        <span class="h-2 w-2 rounded-full bg-mint breathe"></span>
+        <span class="js-vinfo hidden"><span class="js-vtag"></span> </span>已发布 · MIT 开源
+      </div>
+      <h1 class="reveal text-4xl font-black leading-[1.15] tracking-tight sm:text-5xl lg:text-[3.4rem]" style="transition-delay:.06s">
+        把多个静态站点，<br>
+        <span class="bg-gradient-to-r from-mint via-mint to-skyc bg-clip-text text-transparent">装进口袋。</span>
+      </h1>
+      <p class="reveal mt-6 max-w-[65ch] text-base leading-relaxed text-mist md:text-lg" style="transition-delay:.12s">
+        PocketSite 是手机端的静态站点管理器：内嵌<strong class="font-bold text-ink">纯 Kotlin 手写的 HTTP 服务器</strong>，每个站点独立端口、独立开关、可同时运行。应用内 WebView 预览断网可用 —— 无需 Termux、无需 root、零运行时依赖，飞行模式照常工作。
+      </p>
+      <div class="reveal mt-8 flex flex-wrap items-center gap-4" style="transition-delay:.18s">
+        <a href="https://github.com/Samge0/PocketSite/releases" target="_blank" rel="noopener"
+           class="rounded-full bg-gradient-to-r from-mint to-teal px-7 py-3.5 text-sm font-bold text-night transition-all hover:opacity-90 hover:shadow-[0_0_32px_rgba(94,234,212,.4)]">
+          下载 APK<span class="js-vinfo hidden">（<span class="js-vtag"></span> · <span class="js-size"></span>）</span>
+        </a>
+        <a href="https://github.com/Samge0/PocketSite" target="_blank" rel="noopener"
+           class="rounded-full border border-edge bg-card/60 px-7 py-3.5 text-sm font-semibold text-ink backdrop-blur transition-all hover:border-mint/50 hover:text-mint">
+          GitHub 查看源码
+        </a>
+      </div>
+      <div class="reveal mt-7 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-mist" style="transition-delay:.24s">
+        <span class="inline-flex items-center gap-1.5"><svg class="h-3.5 w-3.5 text-mint"><use href="#i-check"/></svg>Android 8.0+</span>
+        <span class="inline-flex items-center gap-1.5"><svg class="h-3.5 w-3.5 text-mint"><use href="#i-check"/></svg>轻量单 APK</span>
+        <span class="inline-flex items-center gap-1.5"><svg class="h-3.5 w-3.5 text-mint"><use href="#i-check"/></svg>CI 签名</span>
+        <span class="inline-flex items-center gap-1.5"><svg class="h-3.5 w-3.5 text-mint"><use href="#i-check"/></svg>MIT License</span>
+      </div>
+    </div>
+
+    <!-- 右：手机样机（CSS/SVG 内联） -->
+    <div class="reveal relative mx-auto w-[300px] sm:w-[320px]" style="transition-delay:.2s">
+      <div class="glow left-1/2 top-1/2 h-[70%] w-[80%] -translate-x-1/2 -translate-y-1/2 bg-mint/[.12]" aria-hidden="true"></div>
+      <div class="relative rounded-[2.6rem] border border-edge bg-deep p-2.5 shadow-[0_40px_80px_-20px_rgba(0,0,0,.7)]">
+        <div class="overflow-hidden rounded-[2.1rem] border border-edge/70 bg-night">
+          <!-- 状态栏 -->
+          <div class="flex items-center justify-between px-6 pt-3.5 text-[11px] font-medium text-mist">
+            <span class="font-mono">12:30</span>
+            <span class="flex items-center gap-1.5" aria-hidden="true">
+              <svg width="14" height="10" viewBox="0 0 14 10" fill="#5C7095"><rect x="0" y="6" width="2.5" height="4" rx=".5"/><rect x="3.8" y="4" width="2.5" height="6" rx=".5"/><rect x="7.6" y="2" width="2.5" height="8" rx=".5"/><rect x="11.4" y="0" width="2.5" height="10" rx=".5"/></svg>
+              <svg width="14" height="10" viewBox="0 0 16 10" fill="none"><rect x=".8" y=".8" width="12" height="8.4" rx="2" stroke="#5C7095" stroke-width="1.2"/><rect x="2.6" y="2.6" width="7" height="4.8" rx=".8" fill="#5EEAD4"/><path d="M14.4 3.4v3.2" stroke="#5C7095" stroke-width="1.4" stroke-linecap="round"/></svg>
+            </span>
+          </div>
+          <!-- 应用栏 -->
+          <div class="mt-2 flex items-center justify-between px-5 pb-3">
+            <span class="flex items-center gap-2">
+              <svg class="h-6 w-6"><use href="#logo-mark"/></svg>
+              <span class="text-sm font-bold">PocketSite</span>
+            </span>
+            <span class="text-[10px] text-mist">3 个站点 · 2 个运行中</span>
+          </div>
+          <!-- 站点卡片 1：运行中 -->
+          <div class="mx-3 mb-2.5 rounded-2xl border border-edge bg-card p-3.5">
+            <div class="flex items-center gap-3">
+              <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-mint to-teal text-sm font-black text-night">D</span>
+              <span class="min-w-0 flex-1">
+                <span class="block truncate text-[13px] font-bold">docs-site</span>
+                <span class="block font-mono text-[10.5px] text-mist">127.0.0.1:8431</span>
+              </span>
+              <span class="flex h-5 w-9 items-center rounded-full bg-mint/90 px-0.5" aria-hidden="true"><span class="h-4 w-4 translate-x-3.5 rounded-full bg-night"></span></span>
+            </div>
+            <div class="mt-3 flex items-center justify-between border-t border-edge/70 pt-2.5">
+              <span class="flex items-center gap-1.5 text-[10.5px] font-semibold text-mint">
+                <span class="h-1.5 w-1.5 rounded-full bg-mint breathe"></span>运行中
+              </span>
+              <span class="flex items-center gap-1 text-dim" aria-hidden="true">
+                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg>
+                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>
+              </span>
+            </div>
+          </div>
+          <!-- 站点卡片 2：运行中 -->
+          <div class="mx-3 mb-2.5 rounded-2xl border border-edge bg-card p-3.5">
+            <div class="flex items-center gap-3">
+              <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-skyc to-teal text-sm font-black text-night">A</span>
+              <span class="min-w-0 flex-1">
+                <span class="block truncate text-[13px] font-bold">api-mock</span>
+                <span class="block font-mono text-[10.5px] text-mist">127.0.0.1:8764</span>
+              </span>
+              <span class="flex h-5 w-9 items-center rounded-full bg-mint/90 px-0.5" aria-hidden="true"><span class="h-4 w-4 translate-x-3.5 rounded-full bg-night"></span></span>
+            </div>
+            <div class="mt-3 flex items-center justify-between border-t border-edge/70 pt-2.5">
+              <span class="flex items-center gap-1.5 text-[10.5px] font-semibold text-mint">
+                <span class="h-1.5 w-1.5 rounded-full bg-mint breathe"></span>运行中
+              </span>
+              <span class="flex items-center gap-1 text-dim" aria-hidden="true">
+                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg>
+                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>
+              </span>
+            </div>
+          </div>
+          <!-- 站点卡片 3：已停止 -->
+          <div class="mx-3 mb-2.5 rounded-2xl border border-edge/70 bg-card/50 p-3.5 opacity-75">
+            <div class="flex items-center gap-3">
+              <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-card2 text-sm font-black text-honey">B</span>
+              <span class="min-w-0 flex-1">
+                <span class="block truncate text-[13px] font-bold">blog-backup</span>
+                <span class="block font-mono text-[10.5px] text-mist">未分配端口</span>
+              </span>
+              <span class="flex h-5 w-9 items-center rounded-full bg-edge px-0.5" aria-hidden="true"><span class="h-4 w-4 rounded-full bg-mist"></span></span>
+            </div>
+            <div class="mt-3 flex items-center gap-1.5 border-t border-edge/50 pt-2.5 text-[10.5px] font-semibold text-dim">
+              <span class="h-1.5 w-1.5 rounded-full bg-dim"></span>已停止
+            </div>
+          </div>
+          <!-- FAB -->
+          <div class="flex justify-end px-5 pb-5 pt-1">
+            <span class="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-mint to-teal text-xl font-bold text-night shadow-[0_8px_24px_rgba(20,184,166,.4)]" aria-hidden="true">＋</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 悬浮徽章 -->
+      <div class="floaty absolute -right-6 top-16 hidden items-center gap-2 rounded-2xl border border-edge bg-card2/80 px-3.5 py-2.5 text-xs font-semibold backdrop-blur sm:flex" style="animation-delay:.6s">
+        <svg class="h-4 w-4 text-mint"><use href="#i-check"/></svg>飞行模式 · 照常工作
+      </div>
+      <div class="floaty absolute -left-8 bottom-24 hidden items-center gap-2 rounded-2xl border border-edge bg-card2/80 px-3.5 py-2.5 text-xs font-semibold backdrop-blur sm:flex" style="animation-delay:1.4s">
+        <svg class="h-4 w-4 text-skyc"><use href="#i-check"/></svg>0 运行时依赖
+      </div>
+      <div class="floaty absolute -right-4 bottom-6 hidden items-center gap-2 rounded-2xl border border-edge bg-card2/80 px-3.5 py-2.5 text-xs font-semibold backdrop-blur sm:flex" style="animation-delay:2.2s">
+        <svg class="h-4 w-4 text-honey"><use href="#i-check"/></svg>轻量单 APK
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======= 技术栈横条（社会认证 / Logo wall 变体） ======= -->
+<section class="border-y border-edge/60 bg-deep/60 py-7">
+  <div class="reveal mx-auto max-w-6xl px-5 md:px-6">
+    <p class="text-center text-[11px] font-semibold uppercase tracking-[.25em] text-dim">技术栈 · 全部手写，零三方运行时</p>
+    <div class="mt-4 flex flex-wrap items-center justify-center gap-x-8 gap-y-3 text-sm font-semibold text-mist">
+      <span>Kotlin 2.0.21</span>
+      <span class="text-edge">·</span>
+      <span>Jetpack Compose</span>
+      <span class="text-edge">·</span>
+      <span>Material 3</span>
+      <span class="text-edge">·</span>
+      <span>手写 HTTP/1.1 服务器</span>
+      <span class="text-edge">·</span>
+      <span>Gradle 8.13</span>
+      <span class="text-edge">·</span>
+      <span>Android 8.0+</span>
+    </div>
+  </div>
+</section>
+
+<!-- ======= 痛点 vs 解决方案 ======= -->
+<section id="why" class="scroll-mt-24 py-20 md:py-28">
+  <div class="mx-auto max-w-6xl px-5 md:px-6">
+    <div class="reveal mx-auto max-w-2xl text-center">
+      <p class="text-xs font-bold uppercase tracking-[.25em] text-mint">Why PocketSite</p>
+      <h2 class="mt-3 text-3xl font-black tracking-tight md:text-4xl">在手机上跑个静态页，<br class="sm:hidden">为什么要这么难？</h2>
+      <p class="mt-4 text-mist">PocketSite 把「装环境、敲命令、切目录」全部压缩成一次拨动开关。</p>
+    </div>
+
+    <div class="mt-14 grid gap-6 lg:grid-cols-2">
+      <!-- 痛点 -->
+      <div class="reveal rounded-3xl border border-edge bg-card p-7 md:p-9">
+        <h3 class="flex items-center gap-2.5 text-lg font-bold text-coral">
+          <svg class="h-5 w-5"><use href="#i-x"/></svg>核心痛点 —— 你是否也遇到过？
+        </h3>
+        <ul class="mt-6 space-y-5">
+          <li class="flex gap-3 text-sm leading-relaxed text-mist"><svg class="mt-0.5 h-4 w-4 shrink-0 text-coral"><use href="#i-x"/></svg>想在手机上给客户/朋友演示一个静态站点，被逼装 Termux + 敲命令行</li>
+          <li class="flex gap-3 text-sm leading-relaxed text-mist"><svg class="mt-0.5 h-4 w-4 shrink-0 text-coral"><use href="#i-x"/></svg>现有「本地服务器」App 都是 shell 环境包装 —— 安装重、操作绕</li>
+          <li class="flex gap-3 text-sm leading-relaxed text-mist"><svg class="mt-0.5 h-4 w-4 shrink-0 text-coral"><use href="#i-x"/></svg>只能同时跑一个站点，端口、目录来回切换</li>
+          <li class="flex gap-3 text-sm leading-relaxed text-mist"><svg class="mt-0.5 h-4 w-4 shrink-0 text-coral"><use href="#i-x"/></svg>飞行模式 / 无网络环境，浏览器联网预检直接拒绝打开 127.0.0.1</li>
+          <li class="flex gap-3 text-sm leading-relaxed text-mist"><svg class="mt-0.5 h-4 w-4 shrink-0 text-coral"><use href="#i-x"/></svg>重装应用后站点全丢，备份迁移全靠手动拷文件</li>
+        </ul>
+      </div>
+      <!-- 解决方案 -->
+      <div class="reveal rounded-3xl border border-mint/25 bg-gradient-to-b from-mint/[.06] to-card p-7 md:p-9" style="transition-delay:.1s">
+        <h3 class="flex items-center gap-2.5 text-lg font-bold text-mint">
+          <svg class="h-5 w-5"><use href="#i-check"/></svg>解决方案 —— 一个 APK 全搞定
+        </h3>
+        <ul class="mt-6 space-y-5">
+          <li class="flex gap-3 text-sm leading-relaxed text-ink"><svg class="mt-0.5 h-4 w-4 shrink-0 text-mint"><use href="#i-check"/></svg><span>一个原生 APK：选一个 ZIP，拨一个开关，站点跑在 <code class="rounded bg-night/70 px-1.5 py-0.5 font-mono text-xs text-mint">http://127.0.0.1:&lt;端口&gt;</code></span></li>
+          <li class="flex gap-3 text-sm leading-relaxed text-ink"><svg class="mt-0.5 h-4 w-4 shrink-0 text-mint"><use href="#i-check"/></svg><span>纯原生 Jetpack Compose 应用，零运行时依赖，服务器 / ZIP 引擎 / 下载器全部手写</span></li>
+          <li class="flex gap-3 text-sm leading-relaxed text-ink"><svg class="mt-0.5 h-4 w-4 shrink-0 text-mint"><use href="#i-check"/></svg>多站点并行：每个站点是独立端口上的隔离服务器实例，想跑几个跑几个</li>
+          <li class="flex gap-3 text-sm leading-relaxed text-ink"><svg class="mt-0.5 h-4 w-4 shrink-0 text-mint"><use href="#i-check"/></svg>回环接口永不掉线，应用内预览直连服务器，飞行模式照常访问</li>
+          <li class="flex gap-3 text-sm leading-relaxed text-ink"><svg class="mt-0.5 h-4 w-4 shrink-0 text-mint"><use href="#i-check"/></svg>存储位置可迁移：复制 → 字节校验 → 原子替换，失败自动回滚</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======= 功能特性 ======= -->
+<section id="features" class="scroll-mt-24 border-t border-edge/50 bg-deep/40 py-20 md:py-28">
+  <div class="mx-auto max-w-6xl px-5 md:px-6">
+    <div class="reveal mx-auto max-w-2xl text-center">
+      <p class="text-xs font-bold uppercase tracking-[.25em] text-mint">Features</p>
+      <h2 class="mt-3 text-3xl font-black tracking-tight md:text-4xl">功能特性</h2>
+      <p class="mt-4 text-mist">三大模块、九项能力，覆盖从部署到安全的所有细节。</p>
+    </div>
+
+    <div class="mt-14 grid gap-6 md:grid-cols-3">
+      <!-- 组 1 -->
+      <div class="reveal rounded-3xl border border-edge bg-card p-7 transition-all hover:border-mint/40">
+        <span class="flex h-11 w-11 items-center justify-center rounded-2xl bg-mint/10 text-mint">
+          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><path d="M6 6h.01M6 18h.01"/></svg>
+        </span>
+        <h3 class="mt-5 text-lg font-bold">🚀 服务器与站点管理</h3>
+        <ul class="mt-5 space-y-5 text-sm">
+          <li>
+            <p class="flex items-center gap-2 font-bold text-ink"><svg class="h-4 w-4 shrink-0 text-mint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0M12 2v10"/></svg>一键启停</p>
+            <p class="mt-1.5 leading-relaxed text-mist">前台服务保活站点；呼吸状态灯一眼看清运行状态。</p>
+          </li>
+          <li>
+            <p class="flex items-center gap-2 font-bold text-ink"><svg class="h-4 w-4 shrink-0 text-mint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>站点库</p>
+            <p class="mt-1.5 leading-relaxed text-mist">字母头像卡片，实时端口/状态/快捷操作：应用内预览 · 系统浏览器 · 复制链接。</p>
+          </li>
+          <li>
+            <p class="flex items-center gap-2 font-bold text-ink"><svg class="h-4 w-4 shrink-0 text-mint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9h16M4 15h16M10 3L8 21M16 3l-2 18"/></svg>独立端口</p>
+            <p class="mt-1.5 leading-relaxed text-mist">每站点 8000–9999 随机分配，查重 + 设备占用探测，详情页可改。</p>
+          </li>
+        </ul>
+      </div>
+      <!-- 组 2 -->
+      <div class="reveal rounded-3xl border border-edge bg-card p-7 transition-all hover:border-mint/40" style="transition-delay:.1s">
+        <span class="flex h-11 w-11 items-center justify-center rounded-2xl bg-skyc/10 text-skyc">
+          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12"/></svg>
+        </span>
+        <h3 class="mt-5 text-lg font-bold">📦 部署与内容</h3>
+        <ul class="mt-5 space-y-5 text-sm">
+          <li>
+            <p class="flex items-center gap-2 font-bold text-ink"><svg class="h-4 w-4 shrink-0 text-skyc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>多样部署</p>
+            <p class="mt-1.5 leading-relaxed text-mist">本地 ZIP 导入或 URL 在线拉取（带下载进度）；内置图文打包指南。</p>
+          </li>
+          <li>
+            <p class="flex items-center gap-2 font-bold text-ink"><svg class="h-4 w-4 shrink-0 text-skyc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>内容热更新</p>
+            <p class="mt-1.5 leading-relaxed text-mist">「更新包」原地覆盖内容，端口与设置原样保留。</p>
+          </li>
+          <li>
+            <p class="flex items-center gap-2 font-bold text-ink"><svg class="h-4 w-4 shrink-0 text-skyc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>随应用启动</p>
+            <p class="mt-1.5 leading-relaxed text-mist">标记站点后，每次打开 App 自动拉起对应服务器。</p>
+          </li>
+        </ul>
+      </div>
+      <!-- 组 3 -->
+      <div class="reveal rounded-3xl border border-edge bg-card p-7 transition-all hover:border-mint/40" style="transition-delay:.2s">
+        <span class="flex h-11 w-11 items-center justify-center rounded-2xl bg-teal/10 text-teal">
+          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        </span>
+        <h3 class="mt-5 text-lg font-bold">🛡 安全与可靠</h3>
+        <ul class="mt-5 space-y-5 text-sm">
+          <li>
+            <p class="flex items-center gap-2 font-bold text-ink"><svg class="h-4 w-4 shrink-0 text-mint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM9 12l2 2 4-4"/></svg>加固的服务器</p>
+            <p class="mt-1.5 leading-relaxed text-mist">纯 Kotlin 手写 HTTP/1.1：SPA fallback、HTTP Range 流式（视频拖动）、路径穿越防护、30+ 类型 MIME。</p>
+          </li>
+          <li>
+            <p class="flex items-center gap-2 font-bold text-ink"><svg class="h-4 w-4 shrink-0 text-mint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 5v14c0 1.66-4 3-9 3s-9-1.34-9-3V5"/><path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/></svg>存储迁移可回滚</p>
+            <p class="mt-1.5 leading-relaxed text-mist">复制 → 字节校验 → 原子替换，失败自动回滚。</p>
+          </li>
+          <li>
+            <p class="flex items-center gap-2 font-bold text-ink"><svg class="h-4 w-4 shrink-0 text-mint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>安全外跳</p>
+            <p class="mt-1.5 leading-relaxed text-mist">外部链接跳转前确认（可在设置中关闭）。</p>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======= 三步快速上手 ======= -->
+<section id="start" class="scroll-mt-24 py-20 md:py-28">
+  <div class="mx-auto max-w-6xl px-5 md:px-6">
+    <div class="reveal mx-auto max-w-2xl text-center">
+      <p class="text-xs font-bold uppercase tracking-[.25em] text-mint">Get Started</p>
+      <h2 class="mt-3 text-3xl font-black tracking-tight md:text-4xl">三步快速上手</h2>
+      <p class="mt-4 text-mist">从下载到大屏演示，全程不超过三步。</p>
+    </div>
+
+    <div class="relative mt-14 grid gap-6 md:grid-cols-3">
+      <div class="pointer-events-none absolute left-[16%] right-[16%] top-10 hidden border-t-2 border-dashed border-edge md:block" aria-hidden="true"></div>
+      <!-- Step 1 -->
+      <div class="reveal relative rounded-3xl border border-edge bg-card p-8">
+        <span class="relative z-10 flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-mint to-teal text-3xl font-black text-night shadow-[0_12px_32px_rgba(20,184,166,.35)]">1</span>
+        <h3 class="mt-6 text-xl font-bold">安装</h3>
+        <p class="mt-3 text-sm leading-relaxed text-mist">从 GitHub Releases 下载 APK<span class="js-vinfo hidden">（<span class="js-vtag"></span> · <span class="js-size"></span>）</span>，Android 8.0+ 直接装。</p>
+      </div>
+      <!-- Step 2 -->
+      <div class="reveal relative rounded-3xl border border-edge bg-card p-8" style="transition-delay:.1s">
+        <span class="relative z-10 flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-skyc to-teal text-3xl font-black text-night shadow-[0_12px_32px_rgba(125,211,252,.25)]">2</span>
+        <h3 class="mt-6 text-xl font-bold">导入</h3>
+        <p class="mt-3 text-sm leading-relaxed text-mist">＋ → 从本地 ZIP 导入（或 URL 拉取）。标准 ZIP，<code class="rounded bg-night/70 px-1.5 py-0.5 font-mono text-xs text-skyc">index.html</code> 在根目录即可；单文件夹套一层也支持，自动提升为站点根。</p>
+      </div>
+      <!-- Step 3 -->
+      <div class="reveal relative rounded-3xl border border-edge bg-card p-8" style="transition-delay:.2s">
+        <span class="relative z-10 flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-mint to-skyc text-3xl font-black text-night shadow-[0_12px_32px_rgba(94,234,212,.3)]">3</span>
+        <h3 class="mt-6 text-xl font-bold">启动</h3>
+        <p class="mt-3 text-sm leading-relaxed text-mist">拨动卡片开关，点 🌐 应用内预览。同一 Wi-Fi 下的电脑访问 <code class="rounded bg-night/70 px-1.5 py-0.5 font-mono text-xs text-skyc">http://&lt;手机IP&gt;:&lt;端口&gt;/</code> 可大屏演示。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======= 对比表 ======= -->
+<section id="compare" class="scroll-mt-24 border-t border-edge/50 bg-deep/40 py-20 md:py-28">
+  <div class="mx-auto max-w-6xl px-5 md:px-6">
+    <div class="reveal mx-auto max-w-2xl text-center">
+      <p class="text-xs font-bold uppercase tracking-[.25em] text-mint">Comparison</p>
+      <h2 class="mt-3 text-3xl font-black tracking-tight md:text-4xl">对比：为什么选它</h2>
+      <p class="mt-4 text-mist">同样的事情，换一种做法，成本天差地别。</p>
+    </div>
+
+    <div class="reveal mt-14 overflow-x-auto rounded-3xl border border-edge bg-card">
+      <table class="w-full min-w-[680px] border-collapse text-left text-sm">
+        <thead>
+          <tr class="border-b border-edge">
+            <th class="px-6 py-5 font-bold text-mist">能力</th>
+            <th class="border-x border-mint/25 bg-mint/[.06] px-6 py-5 font-bold text-mint">
+              <span class="inline-flex items-center gap-2"><svg class="h-5 w-5"><use href="#logo-mark"/></svg>PocketSite</span>
+            </th>
+            <th class="px-6 py-5 font-bold text-mist">Termux + Python</th>
+            <th class="px-6 py-5 font-bold text-mist">拷文件夹手动开</th>
+          </tr>
+        </thead>
+        <tbody class="text-mist">
+          <tr class="border-b border-edge/60">
+            <td class="px-6 py-4 font-semibold text-ink">安装体积</td>
+            <td class="border-x border-mint/25 bg-mint/[.06] px-6 py-4"><span class="inline-flex items-center gap-2 font-semibold text-ink"><svg class="h-4 w-4 shrink-0 text-mint"><use href="#i-check"/></svg>轻量单 APK</span></td>
+            <td class="px-6 py-4"><span class="inline-flex items-center gap-2"><svg class="h-4 w-4 shrink-0 text-coral"><use href="#i-x"/></svg>数百 MB 环境</span></td>
+            <td class="px-6 py-4"><span class="inline-flex items-center gap-2"><svg class="h-4 w-4 shrink-0 text-mint"><use href="#i-check"/></svg>无</span></td>
+          </tr>
+          <tr class="border-b border-edge/60">
+            <td class="px-6 py-4 font-semibold text-ink">上手成本</td>
+            <td class="border-x border-mint/25 bg-mint/[.06] px-6 py-4"><span class="inline-flex items-center gap-2 font-semibold text-ink"><svg class="h-4 w-4 shrink-0 text-mint"><use href="#i-check"/></svg>拨一个开关</span></td>
+            <td class="px-6 py-4"><span class="inline-flex items-center gap-2"><svg class="h-4 w-4 shrink-0 text-coral"><use href="#i-x"/></svg>命令行</span></td>
+            <td class="px-6 py-4"><span class="inline-flex items-center gap-2"><svg class="h-4 w-4 shrink-0 text-honey"><use href="#i-warn"/></svg>看环境</span></td>
+          </tr>
+          <tr class="border-b border-edge/60">
+            <td class="px-6 py-4 font-semibold text-ink">多站点并行</td>
+            <td class="border-x border-mint/25 bg-mint/[.06] px-6 py-4"><span class="inline-flex items-center gap-2 font-semibold text-ink"><svg class="h-4 w-4 shrink-0 text-mint"><use href="#i-check"/></svg>独立端口任意开</span></td>
+            <td class="px-6 py-4"><span class="inline-flex items-center gap-2"><svg class="h-4 w-4 shrink-0 text-honey"><use href="#i-warn"/></svg>手动配端口</span></td>
+            <td class="px-6 py-4"><span class="inline-flex items-center gap-2"><svg class="h-4 w-4 shrink-0 text-coral"><use href="#i-x"/></svg>不支持</span></td>
+          </tr>
+          <tr class="border-b border-edge/60">
+            <td class="px-6 py-4 font-semibold text-ink">飞行模式可用</td>
+            <td class="border-x border-mint/25 bg-mint/[.06] px-6 py-4"><span class="inline-flex items-center gap-2 font-semibold text-ink"><svg class="h-4 w-4 shrink-0 text-mint"><use href="#i-check"/></svg>回环 + 应用内预览</span></td>
+            <td class="px-6 py-4"><span class="inline-flex items-center gap-2"><svg class="h-4 w-4 shrink-0 text-honey"><use href="#i-warn"/></svg>取决于浏览器预检</span></td>
+            <td class="px-6 py-4"><span class="inline-flex items-center gap-2"><svg class="h-4 w-4 shrink-0 text-coral"><use href="#i-x"/></svg>无服务器</span></td>
+          </tr>
+          <tr class="border-b border-edge/60">
+            <td class="px-6 py-4 font-semibold text-ink">重装保留 / 迁移</td>
+            <td class="border-x border-mint/25 bg-mint/[.06] px-6 py-4"><span class="inline-flex items-center gap-2 font-semibold text-ink"><svg class="h-4 w-4 shrink-0 text-mint"><use href="#i-check"/></svg>校验 + 原子替换</span></td>
+            <td class="px-6 py-4"><span class="inline-flex items-center gap-2"><svg class="h-4 w-4 shrink-0 text-coral"><use href="#i-x"/></svg>不支持</span></td>
+            <td class="px-6 py-4"><span class="inline-flex items-center gap-2"><svg class="h-4 w-4 shrink-0 text-coral"><use href="#i-x"/></svg>不支持</span></td>
+          </tr>
+          <tr>
+            <td class="px-6 py-4 font-semibold text-ink">root / 越权</td>
+            <td class="border-x border-mint/25 bg-mint/[.06] px-6 py-4"><span class="inline-flex items-center gap-2 font-semibold text-ink"><svg class="h-4 w-4 shrink-0 text-mint"><use href="#i-check"/></svg>不需要</span></td>
+            <td class="px-6 py-4"><span class="inline-flex items-center gap-2"><svg class="h-4 w-4 shrink-0 text-mint"><use href="#i-check"/></svg>不需要</span></td>
+            <td class="px-6 py-4"><span class="inline-flex items-center gap-2 text-dim"><svg class="h-4 w-4 shrink-0 text-dim"><use href="#i-dash"/></svg>—</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="reveal mt-4 text-center text-xs text-dim">* 表格可横向滚动查看（移动端）。</p>
+  </div>
+</section>
+
+<!-- ======= 技术架构 ======= -->
+<section id="tech" class="scroll-mt-24 py-20 md:py-28">
+  <div class="mx-auto grid max-w-6xl items-start gap-10 px-5 md:px-6 lg:grid-cols-2">
+    <div class="reveal">
+      <p class="text-xs font-bold uppercase tracking-[.25em] text-mint">Under the Hood</p>
+      <h2 class="mt-3 text-3xl font-black tracking-tight md:text-4xl">技术架构</h2>
+      <p class="mt-4 max-w-[65ch] leading-relaxed text-mist">没有框架魔法，没有隐藏依赖 —— 每一行关键代码都写得明明白白。</p>
+      <dl class="mt-8 divide-y divide-edge/70 rounded-3xl border border-edge bg-card">
+        <div class="flex flex-col gap-1 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <dt class="text-sm font-bold text-ink">语言 / UI</dt>
+          <dd class="text-sm text-mist">Kotlin 2.0.21 · Jetpack Compose（Material 3 深色主题）</dd>
+        </div>
+        <div class="flex flex-col gap-1 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <dt class="text-sm font-bold text-ink">构建</dt>
+          <dd class="text-sm text-mist">Gradle 8.13 · AGP 8.7.3</dd>
+        </div>
+        <div class="flex flex-col gap-1 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <dt class="text-sm font-bold text-ink">SDK</dt>
+          <dd class="font-mono text-sm text-mist">minSdk 26 · targetSdk 35</dd>
+        </div>
+        <div class="flex flex-col gap-1 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <dt class="text-sm font-bold text-ink">运行时依赖</dt>
+          <dd class="inline-flex items-center gap-2 text-sm font-semibold text-mint"><svg class="h-4 w-4"><use href="#i-check"/></svg>无 —— 全部基于 Kotlin 标准库手写</dd>
+        </div>
+        <div class="flex flex-col gap-1 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <dt class="text-sm font-bold text-ink">前台服务</dt>
+          <dd class="text-sm text-mist">按站点管理多个隔离服务器实例</dd>
+        </div>
+      </dl>
+    </div>
+
+    <!-- 代码块卡片 -->
+    <div class="reveal min-w-0 lg:mt-24" style="transition-delay:.12s">
+      <div class="overflow-hidden rounded-3xl border border-edge bg-night shadow-[0_24px_60px_-20px_rgba(0,0,0,.6)]">
+        <div class="flex items-center gap-2 border-b border-edge bg-card px-5 py-3.5">
+          <span class="h-3 w-3 rounded-full bg-coral/80"></span>
+          <span class="h-3 w-3 rounded-full bg-honey/80"></span>
+          <span class="h-3 w-3 rounded-full bg-mint/80"></span>
+          <span class="ml-3 font-mono text-xs text-mist">src/main/kotlin/…</span>
+        </div>
+        <pre class="overflow-x-auto p-6 font-mono text-[13px] leading-7"><code><span class="text-dim">// 运行时依赖：无 —— 服务器 / ZIP 引擎 / 下载器全部手写</span>
+
+<span class="text-skyc">StaticSiteServer.kt</span>
+<span class="text-mist">  纯 Kotlin 手写 HTTP/1.1</span>
+<span class="text-dim">  · SPA fallback · HTTP Range 流式（视频拖动）</span>
+<span class="text-dim">  · 路径穿越防护 · 30+ 类型 MIME</span>
+
+<span class="text-skyc">SiteServerService.kt</span>
+<span class="text-mist">  前台服务，按站点管理多个隔离实例</span>
+
+<span class="text-skyc">Migrator.kt</span>
+<span class="text-mist">  存储迁移：复制 → 字节校验 → 原子替换</span>
+<span class="text-dim">  失败自动回滚，数据永不半途而废</span></code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======= FAQ ======= -->
+<section id="faq" class="scroll-mt-24 border-t border-edge/50 bg-deep/40 py-20 md:py-28">
+  <div class="mx-auto max-w-3xl px-5 md:px-6">
+    <div class="reveal text-center">
+      <p class="text-xs font-bold uppercase tracking-[.25em] text-mint">FAQ</p>
+      <h2 class="mt-3 text-3xl font-black tracking-tight md:text-4xl">常见问题</h2>
+    </div>
+
+    <div class="mt-12 space-y-4">
+      <details class="reveal group rounded-2xl border border-edge bg-card transition-all">
+        <summary class="flex items-center justify-between gap-4 px-6 py-5 font-bold text-ink">
+          <span>断网后浏览器打不开 127.0.0.1？</span>
+          <svg class="chev h-5 w-5 shrink-0 text-mint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+        </summary>
+        <p class="px-6 pb-6 text-sm leading-relaxed text-mist">服务器没问题 —— 回环接口永不掉线。很多厂商浏览器（OPPO、vivo、小米、华为…）会做联网预检，在请求到达 127.0.0.1 之前就弹出「无网络」页。改用应用内 🌐 预览即可，它直连服务器，无预检。</p>
+      </details>
+      <details class="reveal group rounded-2xl border border-edge bg-card transition-all" style="transition-delay:.08s">
+        <summary class="flex items-center justify-between gap-4 px-6 py-5 font-bold text-ink">
+          <span>端口会冲突吗？</span>
+          <svg class="chev h-5 w-5 shrink-0 text-mint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+        </summary>
+        <p class="px-6 pb-6 text-sm leading-relaxed text-mist">不会。每站点在 8000–9999 内随机分配，分配时查重其他站点并探测设备占用；详情页可改（需先停止站点）。</p>
+      </details>
+      <details class="reveal group rounded-2xl border border-edge bg-card transition-all" style="transition-delay:.16s">
+        <summary class="flex items-center justify-between gap-4 px-6 py-5 font-bold text-ink">
+          <span>站点存在哪里？</span>
+          <svg class="chev h-5 w-5 shrink-0 text-mint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+        </summary>
+        <p class="px-6 pb-6 text-sm leading-relaxed text-mist">默认应用私有存储（升级不丢，卸载会清）。设置 → 站点根目录可切换到用户目录（需「所有文件访问」权限），迁移自动完成且可回滚。</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ======= 下载与开源 ======= -->
+<section id="download" class="relative scroll-mt-24 overflow-hidden py-20 md:py-28">
+  <div class="glow left-1/2 top-1/2 h-[380px] w-[680px] -translate-x-1/2 -translate-y-1/2 bg-mint/[.09]" aria-hidden="true"></div>
+  <div class="relative mx-auto max-w-4xl px-5 md:px-6">
+    <div class="reveal rounded-[2rem] bg-gradient-to-br from-mint/40 via-edge to-skyc/25 p-px">
+      <div class="rounded-[calc(2rem-1px)] bg-card px-7 py-12 text-center md:px-14">
+        <p class="text-xs font-bold uppercase tracking-[.25em] text-mint">Download &amp; Open Source</p>
+        <h2 class="mt-4 text-3xl font-black tracking-tight md:text-4xl">下载与开源</h2>
+        <p class="mx-auto mt-4 max-w-[60ch] text-mist">一个轻量的 APK，一个 MIT 协议的仓库 —— 拿去用，也欢迎来读代码、提 Issue。</p>
+
+        <div class="mt-9 flex flex-wrap items-center justify-center gap-4">
+          <a href="https://github.com/Samge0/PocketSite/releases" target="_blank" rel="noopener"
+             class="rounded-full bg-gradient-to-r from-mint to-teal px-8 py-4 text-sm font-bold text-night transition-all hover:opacity-90 hover:shadow-[0_0_36px_rgba(94,234,212,.4)]">
+            ⬇ 下载 APK（推荐）
+          </a>
+          <a href="https://github.com/Samge0/PocketSite" target="_blank" rel="noopener"
+             class="rounded-full border border-edge bg-night/60 px-8 py-4 text-sm font-semibold text-ink transition-all hover:border-mint/50 hover:text-mint">
+            ★ 查看源码
+          </a>
+        </div>
+
+        <div class="mt-9 grid gap-3 text-left text-sm sm:grid-cols-3">
+          <div class="rounded-2xl border border-edge bg-deep/70 px-5 py-4">
+            <p class="font-bold text-ink">Release 附件</p>
+            <p class="mt-1.5 text-xs leading-relaxed text-mist">sample-site.zip / samgeai-static-site.zip 示例站点包，导入即测。</p>
+          </div>
+          <div class="rounded-2xl border border-edge bg-deep/70 px-5 py-4">
+            <p class="font-bold text-ink">CI 签名</p>
+            <p class="mt-1.5 text-xs leading-relaxed text-mist">PocketSite-<span class="js-vtag">…</span>.apk（<span class="js-size">…</span>），GitHub Releases 最新版。</p>
+          </div>
+          <div class="rounded-2xl border border-edge bg-deep/70 px-5 py-4">
+            <p class="font-bold text-ink">MIT License</p>
+            <p class="mt-1.5 text-xs leading-relaxed text-mist">完全开源，可自由使用、修改与分发。</p>
+          </div>
+        </div>
+
+        <p class="mt-8 font-mono text-xs text-mist">
+          技术栈：Kotlin · Jetpack Compose · Material 3 · 手写 HTTP/1.1
+          <span class="mx-2 text-edge">|</span>
+          <a href="https://github.com/Samge0/PocketSite" target="_blank" rel="noopener" class="text-mint transition-colors hover:underline">github.com/Samge0/PocketSite</a>
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- ======= 页脚 ======= -->
+<footer class="border-t border-edge/60 bg-deep/60">
+  <div class="mx-auto max-w-6xl px-5 py-14 md:px-6">
+    <div class="grid gap-10 md:grid-cols-[1.4fr_1fr_1fr]">
+      <div>
+        <a href="#top" class="flex items-center gap-2.5">
+          <svg class="h-7 w-7"><use href="#logo-mark"/></svg>
+          <span class="text-lg font-bold tracking-tight">PocketSite</span>
+        </a>
+        <p class="mt-4 max-w-[42ch] text-sm leading-relaxed text-mist">手机端的静态站点管理器 —— 把多个静态站点装进口袋。纯 Kotlin 手写 HTTP 服务器，零运行时依赖，飞行模式照常工作。</p>
+      </div>
+      <div>
+        <h3 class="text-sm font-bold text-ink">页面导航</h3>
+        <ul class="mt-4 space-y-2.5 text-sm text-mist">
+          <li><a href="#why" class="transition-colors hover:text-mint">为什么选它</a></li>
+          <li><a href="#features" class="transition-colors hover:text-mint">功能特性</a></li>
+          <li><a href="#start" class="transition-colors hover:text-mint">三步上手</a></li>
+          <li><a href="#faq" class="transition-colors hover:text-mint">常见问题</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3 class="text-sm font-bold text-ink">资源</h3>
+        <ul class="mt-4 space-y-2.5 text-sm text-mist">
+          <li><a href="https://github.com/Samge0/PocketSite" target="_blank" rel="noopener" class="transition-colors hover:text-mint">GitHub 源码</a></li>
+          <li><a href="https://github.com/Samge0/PocketSite/releases" target="_blank" rel="noopener" class="transition-colors hover:text-mint">下载 APK</a></li>
+          <li><a href="https://github.com/Samge0/PocketSite/blob/main/LICENSE" target="_blank" rel="noopener" class="transition-colors hover:text-mint">MIT License</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="mt-12 flex flex-col items-center justify-between gap-3 border-t border-edge/50 pt-7 text-xs text-mist sm:flex-row">
+      <p>© 2026 PocketSite · 以 MIT 协议开源</p>
+      <p class="font-mono"><span class="js-vinfo hidden"><span class="js-vtag"></span> · </span>Kotlin · Jetpack Compose · 0 依赖</p>
+    </div>
+  </div>
+</footer>
+
+<script>
+// 滚动入场动画
+(function () {
+  var els = document.querySelectorAll('.reveal');
+  if (!('IntersectionObserver' in window) ||
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    els.forEach(function (el) { el.classList.add('in-view'); });
+    return;
+  }
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (e.isIntersecting) { e.target.classList.add('in-view'); io.unobserve(e.target); }
+    });
+  }, { threshold: .12, rootMargin: '0px 0px -40px 0px' });
+  els.forEach(function (el) { io.observe(el); });
+})();
+</script>
+<script>
+(function () {
+  fetch('https://api.github.com/repos/Samge0/PocketSite/releases/latest')
+    .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then(function (rel) {
+      var tag = rel.tag_name || '';
+      var mb = '';
+      var assets = rel.assets || [];
+      for (var i = 0; i < assets.length; i++) {
+        if (/\.apk$/i.test(assets[i].name)) {
+          mb = (assets[i].size / 1048576).toFixed(1) + ' MB';
+          break;
+        }
+      }
+      if (!tag) return;
+      document.querySelectorAll('.js-vtag').forEach(function (el) { el.textContent = tag; });
+      if (mb) document.querySelectorAll('.js-size').forEach(function (el) { el.textContent = mb; });
+      document.querySelectorAll('.js-vinfo').forEach(function (el) { el.classList.remove('hidden'); });
+    })
+    .catch(function () { /* API 失败/限流：保持降级文案，不展开版本信息 */ });
+})();
+</script>
+</body>
+</html>

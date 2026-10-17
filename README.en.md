@@ -10,9 +10,15 @@ Multi-site · Independent ports · One-tap serve · Fully offline
 [![Min SDK](https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=flat-square&logo=android&logoColor=white)](https://developer.android.com)
 [![License](https://img.shields.io/badge/License-MIT-5EEAD4?style=flat-square)](LICENSE)
 
-中文 | [English](README.md)
+中文 | English
 
 </div>
+
+---
+
+> 🌐 **[Project page](https://samge0.github.io/PocketSite/)** — feature overview, quick start, and download links on one page
+>
+> ⬇ **[Download APK (recommended)](https://github.com/Samge0/PocketSite/releases/latest)** — grab the CI-signed APK from Releases (e.g. `PocketSite-v1.x.x.apk`, ~6.3MB), no build required.
 
 ---
 

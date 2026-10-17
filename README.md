@@ -16,6 +16,10 @@
 
 ---
 
+> 🌐 **[在线宣传页](https://samge0.github.io/PocketSite/)** — 功能总览、三步上手与下载入口一页看懂
+>
+> ⬇ **[下载 APK（推荐）](https://github.com/Samge0/PocketSite/releases/latest)** — 到 Releases 页下载 CI 签名的 APK 直接安装（如 `PocketSite-v1.x.x.apk`，约 6.3MB），无需自己编译。
+
 PocketSite 是一个手机端的静态站点管理器：内嵌 HTTP 服务器，把多个静态站点装进口袋。
 每个站点独立端口、独立开关、可同时运行；应用内 WebView 预览断网可用，全程无需 Termux 或 root。
 

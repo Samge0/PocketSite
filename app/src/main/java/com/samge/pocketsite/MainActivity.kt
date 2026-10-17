@@ -115,11 +115,6 @@ class AppViewModel : ViewModel() {
     var showUpdateUrlDialog by mutableStateOf(false)
     var showGuide by mutableStateOf(false)
 
-    // external-browser confirm dialog (③ safety prompt)
-    var pendingExternalUrl by mutableStateOf<String?>(null)
-    var extWarnNoMore by mutableStateOf(false) // checkbox state inside the dialog
-    var extWarningOn by mutableStateOf(true)   // settings toggle mirror
-
     // detail state
     var detailAutostart by mutableStateOf(false)
     var showUpdateDialog by mutableStateOf(false)
@@ -141,7 +136,6 @@ class AppViewModel : ViewModel() {
                     ""
                 }
         }
-        extWarningOn = SitesRepository.extWarningEnabled(ctx)
         val running = SiteServerService.runningSites()
         val ports = running.associateWith { SiteServerService.portOf(it) ?: 0 }
         sites =
@@ -209,29 +203,13 @@ class AppViewModel : ViewModel() {
 
     // ---- import ----
 
-    /** Unified exit-to-external-browser entry: confirms first unless muted. */
+    /** Exit to the external browser. These are local URLs — no confirmation needed. */
     fun openExternal(ctx: Context, url: String) {
-        if (SitesRepository.extWarningEnabled(ctx)) {
-            extWarnNoMore = false
-            pendingExternalUrl = url
-        } else {
-            launchExternal(ctx, url)
-        }
-    }
-
-    fun launchExternal(ctx: Context, url: String) {
         try {
             ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         } catch (e: Exception) {
             toast("未找到浏览器")
         }
-    }
-
-    fun confirmExternal(ctx: Context) {
-        val url = pendingExternalUrl ?: return
-        if (extWarnNoMore) SitesRepository.setExtWarningEnabled(ctx, false)
-        pendingExternalUrl = null
-        launchExternal(ctx, url)
     }
 
     fun importZip(ctx: Context, picked: Uri, updateOf: String? = null) {
@@ -418,48 +396,6 @@ fun RootNav(vm: AppViewModel = viewModel()) {
         }
     }
 
-    // external-browser confirm dialog
-    vm.pendingExternalUrl?.let { url ->
-        AlertDialog(
-            onDismissRequest = { vm.pendingExternalUrl = null },
-            containerColor = Card1,
-            titleContentColor = TextHi,
-            textContentColor = TextMid,
-            title = { Text("离开应用？") },
-            text = {
-                Column {
-                    Text("即将在外部浏览器中打开：")
-                    Spacer(Modifier.height(6.dp))
-                    Text(url, fontSize = 12.sp, color = Sky)
-                    Spacer(Modifier.height(12.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        androidx.compose.material3.Checkbox(
-                            checked = vm.extWarnNoMore,
-                            onCheckedChange = { vm.extWarnNoMore = it },
-                            colors =
-                                androidx.compose.material3.CheckboxDefaults.colors(
-                                    checkedColor = MintDeep,
-                                    checkmarkColor = Color(0xFF04211B),
-                                ),
-                            modifier = Modifier.size(22.dp),
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text("不再提示（可在设置中重新开启）", fontSize = 12.5.sp, color = TextMid)
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = { vm.confirmExternal(ctx) },
-                    colors = ButtonDefaults.buttonColors(containerColor = MintDeep, contentColor = Color(0xFF04211B)),
-                ) { Text("打开") }
-            },
-            dismissButton = {
-                TextButton(onClick = { vm.pendingExternalUrl = null }) { Text("取消", color = TextMid) }
-            },
-        )
-    }
-
     // global busy overlay
     if (vm.busy) {
         Box(
@@ -592,7 +528,6 @@ fun HomeScreen(vm: AppViewModel) {
                             val intent =
                                 android.content.Intent(ctx, SitePreviewActivity::class.java)
                                     .putExtra("port", SiteServerService.portOf(site.name) ?: site.port)
-                                    .putExtra("title", site.name)
                             ctx.startActivity(intent)
                         },
                         onBrowser = {
@@ -665,7 +600,7 @@ fun HomeScreen(vm: AppViewModel) {
                                         vm.showImportSheet = false
                                         ctx.startActivity(
                                             android.content.Intent(ctx, SitePreviewActivity::class.java)
-                                                .putExtra("mode", "guide")
+                                                .putExtra("guide", true)
                                                 .putExtra("title", "站点包格式说明"),
                                         )
                                     },
@@ -1032,8 +967,7 @@ fun DetailScreen(vm: AppViewModel) {
                                     GhostButton("预览", Modifier.weight(1f).height(42.dp)) {
                                         ctx.startActivity(
                                             android.content.Intent(ctx, SitePreviewActivity::class.java)
-                                                .putExtra("port", SiteServerService.portOf(site.name) ?: site.port)
-                                                .putExtra("title", site.name),
+                                                .putExtra("port", SiteServerService.portOf(site.name) ?: site.port),
                                         )
                                     }
                                     GhostButton("浏览器", Modifier.weight(1f).height(42.dp)) {
@@ -1145,7 +1079,7 @@ fun DetailScreen(vm: AppViewModel) {
                                     vm.showUpdateSheet = false
                                     ctx.startActivity(
                                         android.content.Intent(ctx, SitePreviewActivity::class.java)
-                                            .putExtra("mode", "guide")
+                                            .putExtra("guide", true)
                                             .putExtra("title", "站点包格式说明"),
                                     )
                                 },
@@ -1252,29 +1186,63 @@ fun SettingsScreen(vm: AppViewModel) {
     val allFiles =
         rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
             if (Environment.isExternalStorageManager()) {
+                vm.toast("已授予「所有文件访问」")
                 safTree.launch(null)
             } else {
                 vm.toast("未授予「所有文件访问」，自定义目录不可用")
             }
         }
 
+    // pre-permission explainer: shown once before jumping to the system toggle,
+    // so users understand WHY the "all files" switch is needed
+    var showStorageRationale by remember { mutableStateOf(false) }
+
     fun requestDirChange() {
         if (Environment.isExternalStorageManager()) {
             safTree.launch(null)
         } else if (Build.VERSION.SDK_INT >= 30) {
-            try {
-                allFiles.launch(
-                    Intent(
-                        Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                        Uri.parse("package:${ctx.packageName}"),
-                    ),
-                )
-            } catch (e: Exception) {
-                allFiles.launch(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
-            }
+            showStorageRationale = true
         } else {
             vm.toast("需要 Android 11+ 才能迁移到自定义目录")
         }
+    }
+
+    if (showStorageRationale) {
+        AlertDialog(
+            onDismissRequest = { showStorageRationale = false },
+            containerColor = Card1,
+            titleContentColor = TextHi,
+            textContentColor = TextMid,
+            title = { Text("需要「所有文件访问」权限") },
+            text = {
+                Text(
+                    "把站点迁移到应用外的目录（如下载、文档），PocketSite 需要读写该目录的权限。\n\n" +
+                        "点击「去授权」后，请在系统设置中打开「允许管理所有文件」开关，返回后会自动继续选择目录。",
+                    lineHeight = 18.sp,
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showStorageRationale = false
+                        try {
+                            allFiles.launch(
+                                Intent(
+                                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                                    Uri.parse("package:${ctx.packageName}"),
+                                ),
+                            )
+                        } catch (e: Exception) {
+                            allFiles.launch(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MintDeep, contentColor = Color(0xFF04211B)),
+                ) { Text("去授权") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showStorageRationale = false }) { Text("取消", color = TextMid) }
+            },
+        )
     }
 
     val inPrivate = vm.rootPath.contains(ctx.filesDir.path)
@@ -1335,30 +1303,6 @@ fun SettingsScreen(vm: AppViewModel) {
                         } else {
                             Spacer(Modifier.height(8.dp))
                             Text("迁移流程：复制 → 字节校验 → 通过后才删除旧目录，失败自动保留原数据", fontSize = 11.sp, color = TextLow)
-                        }
-                    }
-                }
-            }
-            item {
-                Card(colors = CardDefaults.cardColors(containerColor = Card0), shape = RoundedCornerShape(20.dp)) {
-                    Column(Modifier.padding(20.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text("外部浏览器确认提示", fontSize = 14.sp, color = TextHi)
-                                Text("跳出应用到外部浏览器前先弹窗确认", fontSize = 11.sp, color = TextLow)
-                            }
-                            Switch(
-                                checked = vm.extWarningOn,
-                                onCheckedChange = {
-                                    SitesRepository.setExtWarningEnabled(ctx, it)
-                                    vm.extWarningOn = it
-                                },
-                                colors =
-                                    SwitchDefaults.colors(
-                                        checkedTrackColor = MintDeep,
-                                        checkedThumbColor = Color(0xFF04211B),
-                                    ),
-                            )
                         }
                     }
                 }

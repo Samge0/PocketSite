@@ -2,170 +2,135 @@
 
 # PocketSite
 
-**Pocket-sized static site manager for Android**
+**手机端的静态站点管理器**
 
-Run multiple static sites on your phone with an embedded HTTP server —
-each site gets its own port, its own switch, all fully offline.
+多站点 · 独立端口 · 一键启停 · 完全离线
 
 [![Release](https://img.shields.io/github/v/release/Samge0/PocketSite?style=flat-square)](https://github.com/Samge0/PocketSite/releases)
 [![Min SDK](https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=flat-square&logo=android&logoColor=white)](https://developer.android.com)
 [![License](https://img.shields.io/badge/License-MIT-5EEAD4?style=flat-square)](LICENSE)
 
-*English | [中文](#中文说明)*
+[English](README.en.md) | 中文
 
 </div>
 
 ---
 
-## Why PocketSite
+PocketSite 是一个手机端的静态站点管理器：内嵌 HTTP 服务器，把多个静态站点装进口袋。
+每个站点独立端口、独立开关、可同时运行；应用内 WebView 预览断网可用，全程无需 Termux 或 root。
 
-Most "local server" apps on Android are wrappers around a shell environment — heavy to install,
-awkward to drive. PocketSite is a single native app: pick a ZIP, tap a switch, and your site is
-live at `http://127.0.0.1:<port>`. It exists for the moment you need to show a real, working
-site with no network around.
+## 为什么是 PocketSite
 
-- **No Termux, no root, no network** — one APK, everything embedded
-- **Multi-site, parallel** — every site is an isolated server on its own port; run as many as you like
-- **Survives airplane mode** — the loopback interface never goes down
+Android 上的"本地服务器"应用大多是 shell 环境的包装——安装重、操作绕。PocketSite 是一个纯原生应用：
+选一个 ZIP，拨一个开关，站点就跑在 `http://127.0.0.1:<端口>`。它为"身边没有网络、但需要展示一个真实可访问的站点"的时刻而生。
 
-## Features
+- **无 Termux、无 root、无网络依赖** —— 一个 APK，全部内置
+- **多站点并行** —— 每个站点是独立端口上的隔离服务器实例，想跑几个跑几个
+- **飞行模式照常工作** —— 回环接口永不掉线
+
+## 功能
 
 | | |
 |---|---|
-| 🚀 **One-tap serve** | Foreground service keeps sites alive; pulsing status light shows server state at a glance |
-| 🗂 **Site library** | Letter-avatar tiles with live port, running state and quick actions: in-app preview / system browser / copy URL |
-| 📦 **Deploy anywhere** | Import a local ZIP or fetch from a URL with download progress; package-format guide built in |
-| 🔀 **Hot content update** | "Update package" overwrites content in place — port and settings survive |
-| 🛡 **Hardened server** | Hand-rolled HTTP/1.1 in pure Kotlin: SPA fallback, HTTP Range streaming (video seeking), path-traversal guard, correct MIME for 30+ types |
-| 📁 **Movable storage** | Site root can live in app-private storage or any user directory; migration is copy → byte-verify → atomic swap with rollback on failure |
-| ⚡ **Autostart** | Flag sites to start automatically when the app opens |
-| 🔒 **Safe exits** | External links open with a confirm dialog (mute-able in settings) |
+| 🚀 **一键启停** | 前台服务保活站点；呼吸状态灯一眼看清服务器状态 |
+| 🗂 **站点库** | 字母头像卡片，实时端口/运行状态/快捷操作：应用内预览 · 系统浏览器 · 复制链接 |
+| 📦 **部署方式多样** | 本地 ZIP 导入或 URL 在线拉取（带下载进度）；内置图文打包指南 |
+| 🔀 **内容热更新** | 「更新包」原地覆盖内容——端口与设置原样保留 |
+| 🛡 **加固的服务器** | 纯 Kotlin 手写 HTTP/1.1：SPA fallback、HTTP Range 流式（视频拖动）、路径穿越防护、30+ 类型 MIME |
+| 📁 **存储位置可迁移** | 站点根目录可在应用私有存储与设备任意目录间切换；迁移流程 = 复制 → 字节校验 → 原子替换，失败自动回滚 |
+| ⚡ **随应用启动** | 标记站点后，每次打开 App 自动拉起对应服务器 |
+| 🔒 **安全外跳** | 外部链接跳转前确认（可在设置中关闭提醒） |
 
-## Site package format
+## 站点包格式
 
-A standard ZIP with `index.html` at its root:
+标准 ZIP 压缩包，`index.html` 位于根目录：
 
 ```
 site.zip
-├── index.html        ← required entry
+├── index.html        ← 必需，站点入口
 ├── css/ …
 ├── js/ …
 └── images/ …
 ```
 
-A single wrapping folder containing `index.html` also works — it is auto-promoted to the site
-root. A full illustrated guide lives inside the app (**Import → ?**), and a sample site ships
-with every [release](https://github.com/Samge0/PocketSite/releases) (`sample-site.zip`).
+ZIP 内只有一个文件夹且其中含 `index.html` 的结构也可以——会自动提升为站点根目录。
+应用内有完整图文指南（**导入站点 → ?**），每个 [Release](https://github.com/Samge0/PocketSite/releases)
+都附带示例站点包（`sample-site.zip` / `samgeai-static-site.zip`）。
 
-## Getting started
+## 快速开始
 
-1. Grab the latest APK from [Releases](https://github.com/Samge0/PocketSite/releases) and install it
-2. Import a site: **＋ → 从本地 ZIP 导入** (or fetch from a URL)
-3. Flip the switch on the site card — the server is live on its assigned port
-4. Tap 🌐 to preview inside the app, or ↗ to open in your browser
+1. 从 [Releases](https://github.com/Samge0/PocketSite/releases) 下载最新 APK 并安装
+2. 导入站点：**＋ → 从本地 ZIP 导入**（或 URL 拉取）
+3. 拨动站点卡片上的开关——服务器即刻运行在分配的端口上
+4. 点 🌐 应用内预览，或 ↗ 用系统浏览器访问 `http://127.0.0.1:<端口>/`
 
-> **Offline tip**: use the in-app 🌐 preview when there's no network. Some mobile browsers
-> run a connectivity pre-check and refuse to load `127.0.0.1` in airplane mode; the app's
-> WebView doesn't.
+> **离线提示**：无网络环境请使用应用内 🌐 预览。部分手机浏览器有联网预检，飞行模式下会
+> 拒绝加载 `127.0.0.1`；应用内 WebView 直连服务器，不受影响。
 
-Computers on the same Wi-Fi can also reach your sites at `http://<phone-ip>:<port>/` — handy
-for quick demos on a bigger screen.
+同一 Wi-Fi 下的电脑也可以通过 `http://<手机IP>:<端口>/` 直接访问你的站点——大屏演示很方便。
 
-## Build
+## 构建
 
-Requirements: JDK 17+, Android SDK (compileSdk 35).
+要求：JDK 17+、Android SDK（compileSdk 35）。
 
 ```bash
 git clone https://github.com/Samge0/PocketSite.git
 cd PocketSite
 echo "sdk.dir=/path/to/android-sdk" > local.properties
-./gradlew assembleRelease      # signed release (see Signing below)
-./gradlew assembleDebug        # or debug build
+./gradlew assembleRelease      # 签名 release（见下方签名说明）
+./gradlew assembleDebug        # 或 debug 构建
 ```
 
-### Signing
+### 签名
 
-Releases are signed via CI secrets (`KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`,
-`KEY_PASSWORD`). For local builds, place a keystore at `app/pocketsite-release.jks` and the
-matching credentials in `.secrets/*.txt` — the build picks up whichever source is present
-(CI env vars take priority). Unsigned fallback is debug-signed.
+Release 通过 CI secrets 签名（`KEYSTORE_BASE64`、`KEYSTORE_PASSWORD`、`KEY_ALIAS`、`KEY_PASSWORD`）。
+本地构建时，把 keystore 放到 `app/pocketsite-release.jks`，凭据写入 `.secrets/*.txt`——
+构建会自动选择可用的签名源（CI 环境变量优先）。两种来源都没有时回退 debug 签名。
 
-## Tech
+## 技术
 
 | | |
 |---|---|
-| Language / UI | Kotlin 2.0.21 · Jetpack Compose (Material 3) |
-| Build | Gradle 8.13 · AGP 8.7.3 · minSdk 26 · targetSdk 35 |
-| Runtime dependencies | **None** — the HTTP server, ZIP engine and downloader are all hand-rolled on the Kotlin stdlib |
+| 语言 / UI | Kotlin 2.0.21 · Jetpack Compose（Material 3） |
+| 构建 | Gradle 8.13 · AGP 8.7.3 · minSdk 26 · targetSdk 35 |
+| 运行时依赖 | **无** —— HTTP 服务器、ZIP 引擎、下载器全部基于 Kotlin 标准库手写 |
 
-## Project layout
+## 项目结构
 
 ```
 app/src/main/java/com/samge/pocketsite/
-├── MainActivity.kt        # navigation host + home/detail/settings screens
-├── StaticSiteServer.kt    # embedded HTTP server (SPA fallback, Range, traversal guard)
-├── SiteServerService.kt   # foreground service hosting one server instance per site
-├── SitesRepository.kt     # site registry: import/update/delete/port allocation
-├── Migrator.kt            # storage migration (copy → verify → atomic swap, rollback-safe)
-├── SitePreviewActivity.kt # in-app preview (WebView + toolbar + external-link guard)
-└── Theme.kt               # Material 3 dark theme
+├── MainActivity.kt        # 导航宿主 + 主页/详情页/设置页
+├── StaticSiteServer.kt    # 嵌入式 HTTP 服务器（SPA fallback / Range / 防路径穿越）
+├── SiteServerService.kt   # 前台服务，按站点管理多个服务器实例
+├── SitesRepository.kt     # 站点仓库：导入/更新/删除/端口分配
+├── Migrator.kt            # 存储迁移（复制 → 校验 → 原子替换，可回滚）
+├── SitePreviewActivity.kt # 应用内预览（WebView + 工具栏 + 外链确认）
+├── GithubMark.kt          # GitHub 官方矢量图标
+└── Theme.kt               # Material 3 深色主题
 ```
 
 ## FAQ
 
 <details>
-<summary><b>Why can't my browser open 127.0.0.1 when offline?</b></summary>
+<summary><b>为什么断网后浏览器打不开 127.0.0.1？</b></summary>
 
-The server is fine — the loopback interface never goes down. Many vendor browsers (OPPO,
-vivo, Xiaomi, Huawei…) run a connectivity pre-check and show their own "no network" page
-before the request ever reaches `127.0.0.1`. Use the in-app 🌐 preview instead; it talks to
-the server directly with no pre-check.
+服务器没问题——回环接口永不掉线。很多厂商浏览器（OPPO、vivo、小米、华为…）会做联网预检，
+在请求到达 `127.0.0.1` 之前就弹出自己的"无网络"页。请改用应用内 🌐 预览，它直连服务器，无预检。
 </details>
 
 <details>
-<summary><b>Do ports conflict?</b></summary>
+<summary><b>端口会冲突吗？</b></summary>
 
-No. Each site gets a random port in 8000–9999 that is checked against other sites' ports
-<i>and</i> probed on the device at allocation time. You can change a port in the site's
-detail page (site must be stopped).
+不会。每个站点分配 8000–9999 内的随机端口，分配时会查重其他站点已用端口并探测设备占用。
+站点详情页可以修改端口（需先停止站点）。
 </details>
 
 <details>
-<summary><b>Where are my sites stored?</b></summary>
+<summary><b>站点存在哪里？</b></summary>
 
-App-private storage by default (survives app updates, removed on uninstall). Switch to a
-user directory in **Settings → 站点根目录** to keep sites across reinstalls — migration is
-automatic and rollback-safe.
+默认在应用私有存储（App 升级不丢，卸载会清）。在 **设置 → 站点根目录** 切换到用户目录
+（需授予「所有文件访问」权限）即可跨重装保留站点——迁移自动完成且可回滚。
 </details>
-
----
-
-<div align="center">
-
-[中文说明](#中文说明) · [Releases](https://github.com/Samge0/PocketSite/releases) · [MIT License](LICENSE)
-
-</div>
-
----
-
-<a name="中文说明"></a>
-## 中文说明
-
-PocketSite 是一个手机端的静态站点管理器：内嵌 HTTP 服务器，把多个静态站点装进口袋。
-每个站点独立端口、独立开关、可同时运行；应用内 WebView 预览断网可用，全程无需 Termux 或 root。
-
-**功能**：多站点并行（独立端口 + 冲突检测）· 一键启停（前台服务保活）· ZIP/URL 两种部署方式 ·
-内容热更新（保留端口与设置）· 应用内预览（离线可用）· 站点根目录迁移（复制→校验→原子替换，可回滚）·
-随应用启动 · 外链跳转确认。
-
-**使用**：安装 APK → 导入站点 ZIP（或 URL 拉取）→ 打开站点开关 → 🌐 应用内预览或 ↗ 系统浏览器访问
-`http://127.0.0.1:<端口>/`。同一局域网内的电脑可通过手机 IP 直接访问。
-
-**站点包格式**：标准 ZIP，`index.html` 位于根目录（外层多包一层文件夹亦可，自动提升）。
-应用内「导入站点 → ?」有图文说明，[Releases](https://github.com/Samge0/PocketSite/releases) 附示例站点包。
-
-**构建**：JDK 17+ 与 Android SDK（compileSdk 35），`./gradlew assembleRelease`。
-签名优先级：CI 环境变量（KEYSTORE_BASE64 等）> 本地 `app/pocketsite-release.jks` + `.secrets/`。
 
 ## License
 

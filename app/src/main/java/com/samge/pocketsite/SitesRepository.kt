@@ -37,7 +37,6 @@ object SitesRepository {
     private const val KEY_PORT_PREFIX = "port_" // port_<siteName>
     private const val KEY_ACTIVE = "active_site"
     private const val KEY_AUTOSTART = "autostart_"
-    private const val KEY_EXT_WARN = "external_browser_warning"
     const val DEFAULT_PORT = 8808
     const val PORT_MIN = 8000
     const val PORT_MAX = 9999
@@ -123,15 +122,6 @@ object SitesRepository {
     fun autostart(ctx: Context, name: String): Boolean =
         prefs(ctx).getBoolean(KEY_AUTOSTART + name, false)
 
-    // ---------- external-browser warning ----------
-
-    /** true = show the confirm dialog before leaving for an external browser. */
-    fun extWarningEnabled(ctx: Context): Boolean =
-        prefs(ctx).getBoolean(KEY_EXT_WARN, true)
-
-    fun setExtWarningEnabled(ctx: Context, v: Boolean) {
-        prefs(ctx).edit().putBoolean(KEY_EXT_WARN, v).apply()
-    }
 
     fun setAutostart(ctx: Context, name: String, v: Boolean) {
         prefs(ctx).edit().putBoolean(KEY_AUTOSTART + name, v).apply()

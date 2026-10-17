@@ -35,7 +35,6 @@ object SitesRepository {
     private const val PREFS = "pocketsite_prefs"
     private const val KEY_ROOT = "root_path"
     private const val KEY_PORT_PREFIX = "port_" // port_<siteName>
-    private const val KEY_ACTIVE = "active_site"
     private const val KEY_AUTOSTART = "autostart_"
     const val DEFAULT_PORT = 8808
     const val PORT_MIN = 8000
@@ -111,12 +110,6 @@ object SitesRepository {
 
     // ---------- active site (server boot target handled per-site) ----------
 
-    fun activeSite(ctx: Context): String = prefs(ctx).getString(KEY_ACTIVE, "") ?: ""
-
-    fun setActiveSite(ctx: Context, name: String) {
-        prefs(ctx).edit().putString(KEY_ACTIVE, name).apply()
-    }
-
     // ---------- per-site autostart ----------
 
     fun autostart(ctx: Context, name: String): Boolean =
@@ -125,6 +118,43 @@ object SitesRepository {
 
     fun setAutostart(ctx: Context, name: String, v: Boolean) {
         prefs(ctx).edit().putBoolean(KEY_AUTOSTART + name, v).apply()
+    }
+
+    // ---------- last-used picker directories (import zip / export config) ----------
+
+    fun lastZipDir(ctx: Context): String? = prefs(ctx).getString("last_zip_dir", null)
+
+    fun setLastZipDir(ctx: Context, uri: String) {
+        prefs(ctx).edit().putString("last_zip_dir", uri).apply()
+    }
+
+    fun lastConfigDir(ctx: Context): String? = prefs(ctx).getString("last_config_dir", null)
+
+    fun setLastConfigDir(ctx: Context, uri: String) {
+        prefs(ctx).edit().putString("last_config_dir", uri).apply()
+    }
+
+    // ---------- import source memory (single kind+value per site; last one wins) ----------
+
+    fun setImportSource(ctx: Context, name: String, kind: String, value: String) {
+        prefs(ctx).edit()
+            .putString("src_kind_" + name, kind)   // "uri" | "url"
+            .putString("src_value_" + name, value)
+            .apply()
+    }
+
+    /** Pair(kind, value) or null if never recorded. */
+    fun importSource(ctx: Context, name: String): Pair<String, String>? {
+        val kind = prefs(ctx).getString("src_kind_" + name, null) ?: return null
+        val value = prefs(ctx).getString("src_value_" + name, null) ?: return null
+        return kind to value
+    }
+
+    fun clearImportSource(ctx: Context, name: String) {
+        prefs(ctx).edit()
+            .remove("src_kind_" + name)
+            .remove("src_value_" + name)
+            .apply()
     }
 
     fun autostartSites(ctx: Context): List<String> {
@@ -175,8 +205,9 @@ object SitesRepository {
             p.edit()
                 .remove(KEY_PORT_PREFIX + name)
                 .remove(KEY_AUTOSTART + name)
+                .remove("src_kind_" + name)
+                .remove("src_value_" + name)
                 .apply()
-            if (activeSite(ctx) == name) p.edit().putString(KEY_ACTIVE, "").apply()
         }
         return ok
     }
@@ -215,6 +246,40 @@ object SitesRepository {
     ) {
         io.launch {
             val r = withContext(Dispatchers.IO) { importZip(ctx, zipFile, name) }
+            withContext(Dispatchers.Main) { onDone(r.first, r.second) }
+        }
+    }
+
+    /** Import from a picked content Uri; remembers the Uri for next-time default. */
+    fun importZipFromUriAsync(
+        ctx: Context,
+        uri: Uri,
+        name: String,
+        onDone: (Boolean, String) -> Unit,
+    ) {
+        io.launch {
+            // persist read permission so the same Uri can be re-used later
+            try {
+                ctx.contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            } catch (e: Exception) {
+                // OpenDocument uris are persistable; others may throw — non-fatal
+            }
+            val tmp = File(ctx.cacheDir, "import_$name.zip")
+            val okCopy = runCatching {
+                ctx.contentResolver.openInputStream(uri)?.use { input ->
+                    FileOutputStream(tmp).use { output -> input.copyTo(output) }
+                } != null
+            }.getOrDefault(false)
+            if (!okCopy) {
+                withContext(Dispatchers.Main) { onDone(false, "无法读取所选文件") }
+                return@launch
+            }
+            val r = withContext(Dispatchers.IO) { importZip(ctx, tmp, name) }
+            tmp.delete()
+            if (r.first) setImportSource(ctx, name, "uri", uri.toString())
             withContext(Dispatchers.Main) { onDone(r.first, r.second) }
         }
     }
@@ -274,7 +339,6 @@ object SitesRepository {
             }
             // ensure port exists for new sites
             sitePort(ctx, name)
-            if (!keepPrefs && activeSite(ctx).isEmpty()) setActiveSite(ctx, name)
             // if the site was running before the update, bring it back up on the new content
             if (wasRunning) {
                 SiteServerService.startSiteStatic(ctx, name, sitePort(ctx, name))
@@ -348,6 +412,7 @@ object SitesRepository {
                         conn.disconnect()
                         val res = importZip(ctx, tmp, name)
                         tmp.delete()
+                        if (res.first) setImportSource(ctx, name, "url", urlStr)
                         res
                     } catch (e: Exception) {
                         false to "下载失败：${e.message}"
@@ -429,6 +494,183 @@ object SitesRepository {
     }
 
     // ---------- helpers ----------
+
+    // ---------- config export / import (JSON) ----------
+
+    /** Snapshot of everything needed to restore configuration on another install. */
+    fun exportConfigJson(ctx: Context): String {
+        val p = prefs(ctx)
+        val root = org.json.JSONObject()
+        root.put("app", "PocketSite")
+        root.put("schema", 1)
+        root.put("rootPath", rootDir(ctx).absolutePath)
+        root.put("appVersion", try {
+            ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: ""
+        } catch (e: Exception) {
+            ""
+        })
+        val sites = org.json.JSONArray()
+        for (s in listSites(ctx)) {
+            val o = org.json.JSONObject()
+            o.put("name", s.name)
+            o.put("port", sitePort(ctx, s.name))
+            o.put("autostart", autostart(ctx, s.name))
+            o.put("active", s.name in SiteServerService.runningSites())
+            importSource(ctx, s.name)?.let { (kind, value) ->
+                o.put("sourceKind", kind)
+                o.put("sourceValue", value)
+            }
+            o.put("sizeBytes", s.sizeBytes)
+            o.put("fileCount", s.fileCount)
+            sites.put(o)
+        }
+        root.put("sites", sites)
+        return root.toString(2)
+    }
+
+    /**
+     * Apply a config JSON: restores root path, ports, autostart flags and import
+     * sources. Site CONTENT (the directories themselves) is not transferred —
+     * only metadata; content is expected to be re-imported from the recorded
+     * source (url) or the same zip location.
+     */
+    data class ConfigImportResult(
+        val ok: Boolean,
+        val message: String,
+        val needFetch: List<Pair<String, String>>, // name to url — missing content, url-sourced
+        val toStart: List<String>,                 // sites flagged active in the config
+        val manualNeeded: List<String>,            // uri-sourced sites missing content (must re-import zip by hand)
+    )
+
+    fun importConfigJson(ctx: Context, json: String): ConfigImportResult {
+        return try {
+            val root = org.json.JSONObject(json)
+            if (root.optString("app") != "PocketSite")
+                return ConfigImportResult(false, "不是 PocketSite 配置文件", emptyList(), emptyList(), emptyList())
+
+            // ---- root-path resolution (safety first) ----
+            // Priority: keep current custom dir (already authorized) > imported path
+            // (only usable if storage permission granted AND the dir exists) > default.
+            val configRoot = root.optString("rootPath", "")
+            var rootNote = ""
+            if (configRoot.isNotBlank()) {
+                val currentCustom = prefs(ctx).getString(KEY_ROOT, null)
+                if (currentCustom != null) {
+                    // already on a custom dir → keep it, imported path ignored
+                    rootNote = "；已保留当前自定义根目录（配置中的 ${configRoot} 未应用）"
+                } else if (Environment.isExternalStorageManager() && File(configRoot).exists()) {
+                    // permission granted and dir exists → safe to adopt
+                    setRoot(ctx, File(configRoot))
+                    rootNote = "；已切换到配置中的根目录"
+                } else {
+                    // no permission yet or dir missing → stay on default, tell the user
+                    rootNote = "；配置中的自定义根目录未应用（缺少存储权限或目录不存在）"
+                }
+            }
+            val sites = root.optJSONArray("sites")
+            var applied = 0
+            if (sites != null) {
+                for (i in 0 until sites.length()) {
+                    val o = sites.getJSONObject(i)
+                    val name = sanitizeName(o.optString("name", ""))
+                    if (name.isEmpty()) continue
+                    val port = o.optInt("port", -1)
+                    if (port in PORT_MIN..PORT_MAX) setSitePort(ctx, name, port)
+                    setAutostart(ctx, name, o.optBoolean("autostart", false))
+                    val kind = o.optString("sourceKind", "")
+                    val value = o.optString("sourceValue", "")
+                    if (kind.isNotBlank() && value.isNotBlank()) {
+                        setImportSource(ctx, name, kind, value)
+                    }
+                    applied++
+                }
+            }
+            // sites flagged "active" in the config should be running after import
+            val toStart = mutableListOf<String>()
+            if (sites != null) {
+                for (i in 0 until sites.length()) {
+                    val o = sites.getJSONObject(i)
+                    val name = sanitizeName(o.optString("name", ""))
+                    if (name.isEmpty()) continue
+                    if (o.optBoolean("active", false)) toStart.add(name)
+                }
+            }
+            // which url-sourced sites are missing content on this device?
+            val needFetch = mutableListOf<Pair<String, String>>() // name to url
+            if (sites != null) {
+                for (i in 0 until sites.length()) {
+                    val o = sites.getJSONObject(i)
+                    val name = sanitizeName(o.optString("name", ""))
+                    if (name.isEmpty()) continue
+                    if (o.optString("sourceKind") != "url") continue
+                    val dir = java.io.File(rootDir(ctx), name)
+                    val hasContent = dir.isDirectory && File(dir, "index.html").isFile
+                    if (!hasContent) {
+                        needFetch.add(name to o.optString("sourceValue", ""))
+                    }
+                }
+            }
+            root.put("needFetch", org.json.JSONArray(needFetch.map { (n, u) ->
+                org.json.JSONObject().put("name", n).put("url", u)
+            }))
+            // uri-sourced sites missing content: diagnose why auto-restore isn't
+            // possible so the user knows exactly what to do
+            val manualNeeded = mutableListOf<String>()
+            if (sites != null) {
+                val hasPerm = Environment.isExternalStorageManager()
+                for (i in 0 until sites.length()) {
+                    val o = sites.getJSONObject(i)
+                    val name = sanitizeName(o.optString("name", ""))
+                    if (name.isEmpty()) continue
+                    if (o.optString("sourceKind") != "uri") continue
+                    val dir = java.io.File(rootDir(ctx), name)
+                    val hasContent = dir.isDirectory && File(dir, "index.html").isFile
+                    if (hasContent) continue
+                    // diagnose: decode the recorded uri to a filesystem path and probe it
+                    val src = o.optString("sourceValue", "")
+                    val reason = if (!hasPerm) {
+                        "未授予存储权限，无法访问原 ZIP（授权后重新导入可自动恢复）"
+                    } else {
+                        // permission granted: resolve /storage/emulated/0/... path from
+                        // the content uri and check existence directly
+                        val decoded = android.net.Uri.decode(src)
+                        val afterPrimary = decoded
+                            .substringAfter("document/primary:", "")
+                            .ifEmpty { decoded.substringAfter("primary%3A", decoded.substringAfter("primary:")) }
+                        val fsPath = "/storage/emulated/0/" + afterPrimary
+                        val f = java.io.File(fsPath)
+                        if (f.isFile) {
+                            // file exists! permission is the only blocker — auto-recover now
+                            autoRestoreFromPath(ctx, name, fsPath)
+                            continue // recovered; drop from manual list
+                        }
+                        "原 ZIP（${f.name}）未找到，请手动重新导入"
+                    }
+                    manualNeeded.add("$name（$reason）")
+                }
+            }
+            val msg = buildString {
+                append("已导入配置（$applied 个站点）")
+                append(rootNote)
+                if (needFetch.isNotEmpty()) append("，${needFetch.size} 个 URL 站点将自动下载")
+            }
+            ConfigImportResult(true, msg, needFetch, toStart, manualNeeded)
+        } catch (e: Exception) {
+            ConfigImportResult(false, "配置导入失败：${e.message}", emptyList(), emptyList(), emptyList())
+        }
+    }
+
+    /**
+     * Recover a uri-sourced site from a real filesystem path (used when storage
+     * permission was granted AFTER a config import recorded the source).
+     * Returns human-readable result.
+     */
+    fun autoRestoreFromPath(ctx: Context, name: String, zipPath: String): String {
+        val f = java.io.File(zipPath)
+        if (!f.isFile) return "原 ZIP 不存在：$zipPath"
+        val r = importZip(ctx, f, name, keepPrefs = true)
+        return if (r.first) "「$name」已从原路径自动恢复（${humanSize(f.length())}）" else r.second
+    }
 
     fun humanSize(b: Long): String =
         when {

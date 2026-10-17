@@ -97,15 +97,26 @@ class SiteServerService : Service() {
         }
         val root = File(SitesRepository.rootDir(this), site)
         if (!root.isDirectory) {
+            // site content missing (data cleared / config imported without content)
+            android.widget.Toast.makeText(
+                this,
+                "站点「$site」数据不存在，请重新导入或更新站点包",
+                android.widget.Toast.LENGTH_LONG,
+            ).show()
             stopSite(site)
             return
         }
         val s = StaticSiteServer(port, root)
         if (s.start()) {
             servers[site] = s
-            SitesRepository.setActiveSite(this, site)
             startForeground(NOTIF_ID, buildNotification())
         } else {
+            // most likely cause: port taken by another app since allocation
+            android.widget.Toast.makeText(
+                this,
+                "「$site」启动失败：端口 $port 被占用，请在站点详情中更换端口后重试",
+                android.widget.Toast.LENGTH_LONG,
+            ).show()
             updateNotification()
         }
     }

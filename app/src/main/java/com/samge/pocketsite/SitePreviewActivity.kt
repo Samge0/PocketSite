@@ -88,8 +88,14 @@ class SitePreviewActivity : Activity() {
                     request: WebResourceRequest?,
                 ): Boolean {
                     val u = request?.url ?: return false
-                    // keep navigation inside the local site
-                    return !(u.host == "127.0.0.1" || u.host == "localhost")
+                    // local site stays in-app; external links open in the browser
+                    if (u.host == "127.0.0.1" || u.host == "localhost") return false
+                    try {
+                        startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, u))
+                    } catch (e: Exception) {
+                        Toast.makeText(this@SitePreviewActivity, "未找到浏览器", Toast.LENGTH_SHORT).show()
+                    }
+                    return true
                 }
 
                 override fun onReceivedError(

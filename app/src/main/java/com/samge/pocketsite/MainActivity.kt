@@ -115,6 +115,12 @@ class AppViewModel : ViewModel() {
     var showUpdateUrlDialog by mutableStateOf(false)
     var showGuide by mutableStateOf(false)
 
+    // per-site import source: Pair(kind, value) — "uri" | "url"
+    var detailImportSource by mutableStateOf<Pair<String, String>?>(null)
+    var showConfigImportDialog by mutableStateOf(false)
+    // config import/export result dialog (replaces toast — more room for detail)
+    var configResult by mutableStateOf<String?>(null)
+
     // detail state
     var detailAutostart by mutableStateOf(false)
     var showUpdateDialog by mutableStateOf(false)
@@ -145,6 +151,7 @@ class AppViewModel : ViewModel() {
         rootPath = SitesRepository.rootDir(ctx).absolutePath
         if (detailSite.isNotEmpty()) {
             detailAutostart = SitesRepository.autostart(ctx, detailSite)
+            detailImportSource = SitesRepository.importSource(ctx, detailSite)
         }
     }
 
@@ -163,7 +170,18 @@ class AppViewModel : ViewModel() {
     fun startSite(ctx: Context, name: String) {
         if (name in startingSites || SiteServerService.isRunning(name)) return
         val site = sites.firstOrNull { it.name == name } ?: return
+        // fail fast with actionable guidance before handing off to the service
+        val root = java.io.File(SitesRepository.rootDir(ctx), name)
+        if (!root.isDirectory) {
+            toast("站点「$name」数据不存在：请删除后重新导入，或在详情页用「更新包」恢复")
+            return
+        }
         val port = SitesRepository.sitePort(ctx, name)
+        // device-wide port probe (another app may have grabbed it since allocation)
+        if (!SitesRepository.portFreeOnDevice(port)) {
+            toast("端口 $port 已被其他应用占用，请在详情页更换端口后重试")
+            return
+        }
         startingSites = startingSites + name
         val intent =
             Intent(ctx, SiteServerService::class.java)
@@ -216,24 +234,43 @@ class AppViewModel : ViewModel() {
         busy = true
         busyPercent = -1
         busyPhase = if (updateOf != null) "读取新版本包" else "读取 ZIP"
-        val tmp = SitesRepository.copyUriToCache(ctx, picked, "import.zip")
-        if (tmp == null) {
-            busy = false
-            toast("无法读取所选文件")
-            return
-        }
-        val cb: (Boolean, String) -> Unit = { ok, msg ->
-            busy = false
-            tmp.delete()
-            toast(msg)
-            refresh(ctx)
+        // persist read permission so the same Uri can be re-opened later (update flow)
+        try {
+            ctx.contentResolver.takePersistableUriPermission(
+                picked,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        } catch (e: Exception) {
         }
         if (updateOf != null) {
-            SitesRepository.updateSiteAsync(ctx, tmp, updateOf, cb)
+            val tmp = SitesRepository.copyUriToCache(ctx, picked, "import.zip")
+            if (tmp == null) {
+                busy = false
+                toast("无法读取所选文件")
+                return
+            }
+            SitesRepository.updateSiteAsync(ctx, tmp, updateOf) { ok, msg ->
+                busy = false
+                tmp.delete()
+                if (ok) SitesRepository.setImportSource(ctx, updateOf, "uri", picked.toString())
+                toast(msg)
+                refresh(ctx)
+            }
         } else {
-            val name = SitesRepository.sanitizeName(tmp.nameWithoutExtension.ifEmpty { "site" })
-            SitesRepository.importZipAsync(ctx, tmp, name, cb)
+            val name = suggestedName(picked)
+            SitesRepository.importZipFromUriAsync(ctx, picked, name) { ok, msg ->
+                busy = false
+                toast(msg)
+                refresh(ctx)
+            }
         }
+    }
+
+    private fun suggestedName(picked: Uri): String {
+        val raw = picked.lastPathSegment ?: "site"
+        return SitesRepository.sanitizeName(
+            raw.substringAfterLast('/').substringBefore(".zip").ifEmpty { "site" },
+        )
     }
 
     fun importUrl(ctx: Context, url: String, name: String) {
@@ -244,6 +281,7 @@ class AppViewModel : ViewModel() {
         SitesRepository.importUrlAsync(ctx, url, name, { p -> busyPercent = p }) { ok, msg ->
             busy = false
             busyPercent = -1
+            if (ok) SitesRepository.setImportSource(ctx, name, "url", url)  // sync cached source
             toast(msg)
             refresh(ctx)
         }
@@ -257,6 +295,7 @@ class AppViewModel : ViewModel() {
         SitesRepository.importUrlAsync(ctx, url, name, { p -> busyPercent = p }) { ok, msg ->
             busy = false
             busyPercent = -1
+            if (ok) SitesRepository.setImportSource(ctx, name, "url", url)  // sync cached source
             toast(msg)
             refresh(ctx)
         }
@@ -289,6 +328,97 @@ class AppViewModel : ViewModel() {
     fun setAutostart(ctx: Context, name: String, v: Boolean) {
         SitesRepository.setAutostart(ctx, name, v)
         detailAutostart = v
+    }
+
+    fun exportConfig(ctx: Context, dest: Uri) {
+        busy = true
+        busyPercent = -1
+        busyPhase = "导出配置"
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            val json = SitesRepository.exportConfigJson(ctx)
+            val ok = runCatching {
+                ctx.contentResolver.openOutputStream(dest)?.use { it.write(json.toByteArray()) } != null
+            }.getOrDefault(false)
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                busy = false
+                configResult = if (ok) "配置已成功导出到所选位置。" else "导出失败，请重试或更换保存位置。"
+            }
+        }
+    }
+
+    fun importConfig(ctx: Context, picked: Uri) {
+        busy = true
+        busyPercent = -1
+        busyPhase = "导入配置"
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            var json: String? = null
+            try {
+                ctx.contentResolver.openInputStream(picked)?.use { stream ->
+                    json = String(stream.readBytes(), Charsets.UTF_8)
+                }
+            } catch (e: Exception) {
+                json = null
+            }
+            val r: SitesRepository.ConfigImportResult =
+                if (json != null) SitesRepository.importConfigJson(ctx, json!!)
+                else SitesRepository.ConfigImportResult(false, "无法读取所选文件", emptyList(), emptyList(), emptyList())
+            // 1) download url-sourced sites missing content (await each — sequential,
+            //    so progress display and prefs writes don't race)
+            for ((name, url) in r.needFetch) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    busyPhase = "下载 $name"
+                }
+                val done = kotlinx.coroutines.CompletableDeferred<Boolean>()
+                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                    importUrlInternal(
+                        ctx, url, name,
+                        onProgress = { p -> busyPercent = p },
+                        onDone = { ok, _ -> done.complete(ok) },
+                    )
+                }
+                done.await()
+            }
+
+            // 2) start sites flagged active in the config (content now in place for
+            //    url-sourced ones; uri-sourced missing ones are correctly skipped)
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                for (name in r.toStart) {
+                    val root = java.io.File(SitesRepository.rootDir(ctx), name)
+                    if (root.isDirectory) {
+                        val port = SitesRepository.sitePort(ctx, name)
+                        SiteServerService.startSiteStatic(ctx, name, port)
+                    }
+                }
+                if (r.toStart.isNotEmpty()) refresh(ctx)
+            }
+
+            // 3) summary dialog
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                busy = false
+                busyPercent = -1
+                val parts = mutableListOf<String>()
+                parts.add("元数据已恢复（端口/随应用启动/来源）。")
+                if (r.needFetch.isNotEmpty()) parts.add("\n✓ ${r.needFetch.size} 个 URL 站点已自动下载。")
+                if (r.manualNeeded.isNotEmpty()) {
+                    parts.add("\n⚠ 以下站点需手动重新导入 ZIP（来源文件在原设备上）：")
+                    parts.add(r.manualNeeded.joinToString("、") { "「$it」" })
+                }
+                configResult = if (r.ok) "配置导入完成。\n" + parts.joinToString("")
+                               else "配置导入失败：${r.message}"
+                refresh(ctx)
+            }
+        }
+    }
+
+    /** Internal sequential URL import used by config auto-fetch (reports via callbacks). */
+    private fun importUrlInternal(
+        ctx: Context,
+        url: String,
+        name: String,
+        onProgress: (Int) -> Unit,
+        onDone: (Boolean, String) -> Unit,
+    ) {
+        SitesRepository.importUrlAsync(ctx, url, name, onProgress, onDone)
     }
 
     fun changeRoot(ctx: Context, newRoot: File) {
@@ -396,6 +526,24 @@ fun RootNav(vm: AppViewModel = viewModel()) {
         }
     }
 
+    // config import/export result dialog
+    vm.configResult?.let { msg ->
+        AlertDialog(
+            onDismissRequest = { vm.configResult = null },
+            containerColor = Card1,
+            titleContentColor = TextHi,
+            textContentColor = TextMid,
+            title = { Text("配置备份") },
+            text = { Text(msg) },
+            confirmButton = {
+                Button(
+                    onClick = { vm.configResult = null },
+                    colors = ButtonDefaults.buttonColors(containerColor = MintDeep, contentColor = Color(0xFF04211B)),
+                ) { Text("知道了") }
+            },
+        )
+    }
+
     // global busy overlay
     if (vm.busy) {
         Box(
@@ -451,11 +599,29 @@ fun HomeScreen(vm: AppViewModel) {
     val ctx = LocalContext.current
     val clip = LocalClipboardManager.current
 
+    // overlays on HOME close first on back; only when none is open does the
+    // RootNav handler run (and it's a no-op on HOME)
+    androidx.activity.compose.BackHandler(
+        enabled = vm.showImportSheet || vm.showUrlDialog || vm.showConfigImportDialog || vm.configResult != null || vm.confirmDelete != null,
+    ) {
+        when {
+            vm.showImportSheet -> vm.showImportSheet = false
+            vm.showUrlDialog -> vm.showUrlDialog = false
+            vm.configResult != null -> vm.configResult = null
+            vm.confirmDelete != null -> vm.confirmDelete = null
+        }
+    }
+
     LaunchedEffect(Unit) { vm.refresh(ctx) }
 
+    // remember last zip dir: derive parent hint from last picked file uri
+    val lastZipUri = remember { SitesRepository.lastZipDir(ctx) }
     val zipPicker =
-        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-            if (uri != null) vm.importZip(ctx, uri)
+        rememberLauncherForActivityResult(OpenDocumentAt(lastZipUri)) { uri: Uri? ->
+            if (uri != null) {
+                SitesRepository.setLastZipDir(ctx, uri.toString())
+                vm.importZip(ctx, uri)
+            }
         }
 
     Scaffold(containerColor = Bg0) { pad ->
@@ -539,6 +705,7 @@ fun HomeScreen(vm: AppViewModel) {
                             clip.setText(AnnotatedString("http://127.0.0.1:$port/"))
                             vm.toast("已复制 http://127.0.0.1:$port/")
                         },
+                        onStoppedHint = { vm.toast("站点未启动，请先打开站点开关") },
                         onToggle = { on ->
                             if (on) vm.startSite(ctx, site.name) else vm.stopSite(ctx, site.name)
                         },
@@ -615,7 +782,7 @@ fun HomeScreen(vm: AppViewModel) {
                             desc = "选择手机中的 .zip 站点包",
                             onClick = {
                                 vm.showImportSheet = false
-                                zipPicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+                                zipPicker.launch(arrayOf("application/zip", "application/x-zip-compressed"))
                             },
                         )
                         HorizontalDivider(color = Stroke)
@@ -711,6 +878,7 @@ fun SiteRow(
     onBrowser: () -> Unit,
     onCopy: () -> Unit,
     onToggle: (Boolean) -> Unit,
+    onStoppedHint: () -> Unit = {},
 ) {
     val transition = rememberInfiniteTransition(label = "pulse")
     val glow by transition.animateFloat(
@@ -825,9 +993,9 @@ fun SiteRow(
             Spacer(Modifier.height(10.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Spacer(Modifier.weight(1f))
-                IconAction("🌐", "WebView 预览", enabled = site.running, onClick = onPreview)
-                IconAction("↗", "系统浏览器打开", enabled = site.running, onClick = onBrowser)
-                IconAction("⧉", "复制链接", enabled = site.running, onClick = onCopy)
+                IconAction("🌐", "WebView 预览", enabled = true, onClick = { if (site.running) onPreview() else onStoppedHint() })
+                IconAction("↗", "系统浏览器打开", enabled = true, onClick = { if (site.running) onBrowser() else onStoppedHint() })
+                IconAction("⧉", "复制链接", enabled = true, onClick = { if (site.running) onCopy() else onStoppedHint() })
             }
         }
     }
@@ -858,11 +1026,20 @@ fun DetailScreen(vm: AppViewModel) {
     val site = vm.sites.firstOrNull { it.name == vm.detailSite }
     val clip = LocalClipboardManager.current
 
+    // back closes in-app overlays first (update sheet / url dialog), then the screen
+    androidx.activity.compose.BackHandler(enabled = vm.showUpdateSheet || vm.showUpdateUrlDialog) {
+        if (vm.showUpdateUrlDialog) vm.showUpdateUrlDialog = false
+        else vm.showUpdateSheet = false
+    }
+
     LaunchedEffect(Unit) { vm.refresh(ctx) }
 
     val updatePicker =
-        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-            if (uri != null) vm.importZip(ctx, uri, updateOf = vm.detailSite)
+        rememberLauncherForActivityResult(OpenDocumentAt(SitesRepository.lastZipDir(ctx))) { uri: Uri? ->
+            if (uri != null) {
+                SitesRepository.setLastZipDir(ctx, uri.toString())
+                vm.importZip(ctx, uri, updateOf = vm.detailSite)
+            }
         }
 
     Scaffold(containerColor = Bg0) { pad ->
@@ -1068,6 +1245,16 @@ fun DetailScreen(vm: AppViewModel) {
                             Text("更新站点包", color = TextHi, fontSize = 17.sp)
                             Spacer(Modifier.height(4.dp))
                             Text("「${vm.detailSite}」的内容将被覆盖，端口与设置保留", color = TextLow, fontSize = 12.sp)
+                            vm.detailImportSource?.let { (kind, value) ->
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    if (kind == "url") "上次来源：$value" else "上次来源：本机 ZIP（$value）",
+                                    color = Mint,
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                         }
                         // guide button: same as import sheet
                         Box(
@@ -1094,7 +1281,7 @@ fun DetailScreen(vm: AppViewModel) {
                         desc = "选择手机中的 .zip 站点包",
                         onClick = {
                             vm.showUpdateSheet = false
-                            updatePicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+                            updatePicker.launch(arrayOf("application/zip", "application/x-zip-compressed"))
                         },
                     )
                     HorizontalDivider(color = Stroke)
@@ -1114,7 +1301,9 @@ fun DetailScreen(vm: AppViewModel) {
 
     // update-from-url dialog
     if (vm.showUpdateUrlDialog) {
-        var urlText by remember { mutableStateOf("") }
+        var urlText by remember {
+            mutableStateOf(vm.detailImportSource?.takeIf { it.first == "url" }?.second ?: "")
+        }
         AlertDialog(
             onDismissRequest = { vm.showUpdateUrlDialog = false },
             containerColor = Card1,
@@ -1171,6 +1360,22 @@ fun SettingsScreen(vm: AppViewModel) {
     val ctx = LocalContext.current
 
     LaunchedEffect(Unit) { vm.refresh(ctx) }
+
+    val lastCfgUri = remember { SitesRepository.lastConfigDir(ctx) }
+    val configExport =
+        rememberLauncherForActivityResult(CreateDocumentAt(lastCfgUri, "application/json")) { uri: Uri? ->
+            if (uri != null) {
+                SitesRepository.setLastConfigDir(ctx, uri.toString())
+                vm.exportConfig(ctx, uri)
+            }
+        }
+    val configImport =
+        rememberLauncherForActivityResult(OpenDocumentAt(lastCfgUri)) { uri: Uri? ->
+            if (uri != null) {
+                SitesRepository.setLastConfigDir(ctx, uri.toString())
+                vm.importConfig(ctx, uri)
+            }
+        }
 
     val safTree =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
@@ -1286,6 +1491,15 @@ fun SettingsScreen(vm: AppViewModel) {
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
+                        if (inPrivate) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "⚠ 当前为应用私有目录：卸载应用会删除全部站点数据。如需保留，请先导出配置并迁移到自定义目录。",
+                                fontSize = 11.sp,
+                                color = Amber,
+                                lineHeight = 15.sp,
+                            )
+                        }
                         Spacer(Modifier.height(12.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             GradientButton("更改并迁移目录", Modifier.weight(1f).height(44.dp), enabled = runningCount == 0) {
@@ -1303,6 +1517,28 @@ fun SettingsScreen(vm: AppViewModel) {
                         } else {
                             Spacer(Modifier.height(8.dp))
                             Text("迁移流程：复制 → 字节校验 → 通过后才删除旧目录，失败自动保留原数据", fontSize = 11.sp, color = TextLow)
+                        }
+                    }
+                }
+            }
+            item {
+                Card(colors = CardDefaults.cardColors(containerColor = Card0), shape = RoundedCornerShape(20.dp)) {
+                    Column(Modifier.padding(20.dp)) {
+                        Text("配置备份", fontSize = 13.sp, color = TextLow)
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "导出站点列表、端口、随应用启动与导入来源到 JSON 文件，方便换机或重装后一键恢复配置。",
+                            fontSize = 11.sp,
+                            color = TextMid,
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            GradientButton("导出配置", Modifier.weight(1f).height(44.dp)) {
+                                configExport.launch("pocketsite-config.json")
+                            }
+                            GhostButton("导入配置", Modifier.weight(1f).height(44.dp)) {
+                                configImport.launch(arrayOf("application/json"))
+                            }
                         }
                     }
                 }

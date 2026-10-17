@@ -1,55 +1,79 @@
-# PocketSite — 手机静态站点演示器
+# PocketSite
 
-面试离线作品展示：多个静态站点装进手机，每站独立端口、独立开关，一键启停内嵌 HTTP 服务器。纯 App 实现，无需 Termux。
+<p align="center">
+  <b>手机端的静态站点管理器</b><br>
+  多站点 · 独立端口 · 一键启停 · 完全离线
+</p>
 
-**设计**：Material 3 Expressive 深色（deep-navy + mint 强调）——呼吸状态灯、渐变按钮、字母头像瓦片、全中文界面。
+PocketSite 在手机上运行一个嵌入式 HTTP 服务器，把多个静态站点装进口袋：每个站点独立端口、独立开关，可同时运行；通过应用内 WebView 预览或系统浏览器访问，全程无需网络，也不依赖 Termux 等外部环境。
 
-## 核心概念
+## 功能特性
 
-- **站点 = 根目录下子目录 + 独立端口**（prefs 持久化，随机分配、冲突检测：查已用端口 + 设备占用探测）
-- **多站并行**：每个站点独立 ServerSocket 实例，可同时运行，互不影响
-- **无内置站点**：所有站点通过 本地 ZIP 导入 或 URL 拉取 进入（MVP 定位，包不进 APK）
+- **多站点并行**：每个站点一个独立 HTTP 服务器实例（独立端口），同时运行互不干扰；端口随机分配并做冲突检测（查重 + 设备占用探测），也可手动修改
+- **一键启停**：前台 Service 保活，站点卡片开关直接控制；启动过程有加载动效与就绪提示
+- **多种部署方式**：本地 ZIP 导入 / URL 在线拉取（带下载进度），内容更新保留端口与设置
+- **应用内预览**：WebView 直接访问回环地址，断网环境同样可用（部分浏览器断网时会拦截 127.0.0.1，应用内预览不受影响）
+- **站点包格式自检**：自动剥离 ZIP 外层目录、忽略 `__MACOSX` 垃圾文件、缺失 `index.html` 标记警示、防路径穿越
+- **站点根目录可迁移**：应用私有目录（默认，免权限）与设备任意目录之间自由切换；迁移采用「复制 → 字节级校验 → 原子替换」流程，失败自动保留原数据
+- **随应用启动**：为站点开启后，每次打开 App 自动拉起对应服务器
 
-## 主页
+## 站点包格式
 
-- 站点 item：字母头像、站点名、运行状态点 + 端口、启动开关、三个图标键（WebView 预览 / 系统浏览器 / 复制链接）
-- 点 item 进详情页；FAB ＝ 导入（弹层选 ZIP / URL）
-- 空态：引导卡片「导入第一个站点」
-- 顶栏 ⚙ 进设置
+一个标准的 ZIP 压缩包，入口 `index.html` 位于根目录：
 
-## 站点详情页
+```
+site.zip
+├── index.html        ← 必需，站点入口
+├── css/
+├── js/
+└── images/
+```
 
-- 启动开关 + 实时 URL；运行中显示 预览/浏览器/复制 三键
-- 设置：随应用启动（打开 App 自动拉起该站）、端口修改（需先停止）、站点包管理（更新包=覆盖内容保留端口与设置 / 删除站点=连端口设置一起清）
+也支持 ZIP 内只有一个文件夹且其中含 `index.html` 的结构（自动提升为站点根目录）。应用内「导入站点 → ?」有完整的图文说明。
 
-## 设置页
+## 使用
 
-- 站点根目录：应用私有（默认，免权限）↔ 任意目录（SAF + 所有文件访问授权）
-- 迁移：复制 → 字节校验 → 原子替换 → 才删旧目录；失败保留原数据；有站点运行时禁迁
+1. 安装 APK，首次启动授予通知权限
+2. 「导入 ZIP」选择打包好的站点包，或「URL 拉取」在线下载
+3. 打开站点卡片上的开关启动服务器
+4. 点 🌐 应用内预览，或 ↗ 用系统浏览器访问 `http://127.0.0.1:<端口>/`
 
-## 服务器（StaticSiteServer，纯 Kotlin 零依赖）
-
-SPA fallback、HTTP Range 206（视频拖动）、路径穿越防护、30+ MIME、每站点一个端口一个实例。
+同一局域网内的电脑也可通过手机 IP 直接访问（服务器绑定 `0.0.0.0`）。
 
 ## 构建
 
+要求：JDK 17+、Android SDK（compileSdk 35）。
+
+```bash
+git clone https://github.com/Samge0/PocketSite.git
+cd PocketSite
+echo "sdk.dir=/path/to/android-sdk" > local.properties
+./gradlew assembleDebug
 ```
-export JAVA_HOME="F:/APP/Android/Android Studio/jbr"
-cd F:/Space/PRO/android/PocketSite
-"F:/APP/Android/Android Studio/jbr/bin/java.exe" -cp gradle/wrapper/gradle-wrapper.jar org.gradle.wrapper.GradleWrapperMain assembleDebug --no-daemon
+
+产物：`app/build/outputs/apk/debug/app-debug.apk`
+
+## 技术栈
+
+| 项 | 说明 |
+|---|---|
+| 语言 / UI | Kotlin 2.0.21 · Jetpack Compose（Material 3） |
+| 构建 | Gradle 8.13 · AGP 8.7.3 · minSdk 26 / targetSdk 35 |
+| 运行时依赖 | **零**——HTTP 服务器、ZIP 解压、下载器均为纯 Kotlin 标准库实现 |
+
+## 项目结构
+
+```
+app/src/main/java/com/samge/pocketsite/
+├── MainActivity.kt        # 导航宿主 + 主页/详情页/设置页 UI + ViewModel
+├── StaticSiteServer.kt    # 嵌入式 HTTP 服务器（SPA fallback / Range 206 / 防路径穿越）
+├── SiteServerService.kt   # 前台 Service，按站点管理多个服务器实例
+├── SitesRepository.kt     # 站点仓库：导入/更新/删除/端口分配/迁移
+├── Migrator.kt            # 目录迁移：复制→校验→替换，失败可回滚
+├── SitePreviewActivity.kt # 应用内预览（WebView + 工具栏）
+└── Theme.kt               # Material 3 深色主题
 ```
 
-产物 ≈14MB（不含站点包，站点全靠导入）。
+## License
 
-## 离线演示说明
-
-服务器绑回环 + 全接口，飞行模式下照常工作（实测 Active default network: none 时仍 200）。但多数国产浏览器断网时会拦截 127.0.0.1（联网预检直接弹无网页）——**离线演示用 item 上的 WebView 预览**，无预检必开。
-
-## 验证（2026-10-17，Small_Phone AVD）
-
-- 空态引导卡 → FAB/引导按钮 → 底部弹层（ZIP/URL 双选项）
-- SAF 选 ZIP 导入 109MB 主站点包 → 自动随机端口 ：8536
-- URL 拉取（宿主机 http.server → 10.0.2.2）→ site-two 独立端口 ：9207，与 ：8536 不冲突
-- 双站并行：site-two :9207 返回内容同时 import :8536 保持 200 + Range 206 + SPA fallback
-- 详情页：启动开关、随应用启动、端口修改、更新包、删除（确认弹窗）
-- 历史验证延续：离线 WebView 预览、迁移算法、路径穿越防护
+[MIT](LICENSE)

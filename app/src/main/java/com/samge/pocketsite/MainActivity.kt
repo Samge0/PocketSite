@@ -3,6 +3,7 @@ package com.samge.pocketsite
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -67,9 +68,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -112,15 +115,33 @@ class AppViewModel : ViewModel() {
     var showUpdateUrlDialog by mutableStateOf(false)
     var showGuide by mutableStateOf(false)
 
+    // external-browser confirm dialog (③ safety prompt)
+    var pendingExternalUrl by mutableStateOf<String?>(null)
+    var extWarnNoMore by mutableStateOf(false) // checkbox state inside the dialog
+    var extWarningOn by mutableStateOf(true)   // settings toggle mirror
+
     // detail state
     var detailAutostart by mutableStateOf(false)
     var showUpdateDialog by mutableStateOf(false)
+
+    /** Real versionName from build config (single source of truth: app/build.gradle.kts). */
+    var appVersion by mutableStateOf("")
+        private set
 
     fun toast(s: String) {
         toast = s
     }
 
     fun refresh(ctx: Context) {
+        if (appVersion.isEmpty()) {
+            appVersion =
+                try {
+                    ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: ""
+                } catch (e: PackageManager.NameNotFoundException) {
+                    ""
+                }
+        }
+        extWarningOn = SitesRepository.extWarningEnabled(ctx)
         val running = SiteServerService.runningSites()
         val ports = running.associateWith { SiteServerService.portOf(it) ?: 0 }
         sites =
@@ -187,6 +208,31 @@ class AppViewModel : ViewModel() {
     }
 
     // ---- import ----
+
+    /** Unified exit-to-external-browser entry: confirms first unless muted. */
+    fun openExternal(ctx: Context, url: String) {
+        if (SitesRepository.extWarningEnabled(ctx)) {
+            extWarnNoMore = false
+            pendingExternalUrl = url
+        } else {
+            launchExternal(ctx, url)
+        }
+    }
+
+    fun launchExternal(ctx: Context, url: String) {
+        try {
+            ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        } catch (e: Exception) {
+            toast("未找到浏览器")
+        }
+    }
+
+    fun confirmExternal(ctx: Context) {
+        val url = pendingExternalUrl ?: return
+        if (extWarnNoMore) SitesRepository.setExtWarningEnabled(ctx, false)
+        pendingExternalUrl = null
+        launchExternal(ctx, url)
+    }
 
     fun importZip(ctx: Context, picked: Uri, updateOf: String? = null) {
         busy = true
@@ -372,6 +418,48 @@ fun RootNav(vm: AppViewModel = viewModel()) {
         }
     }
 
+    // external-browser confirm dialog
+    vm.pendingExternalUrl?.let { url ->
+        AlertDialog(
+            onDismissRequest = { vm.pendingExternalUrl = null },
+            containerColor = Card1,
+            titleContentColor = TextHi,
+            textContentColor = TextMid,
+            title = { Text("离开应用？") },
+            text = {
+                Column {
+                    Text("即将在外部浏览器中打开：")
+                    Spacer(Modifier.height(6.dp))
+                    Text(url, fontSize = 12.sp, color = Sky)
+                    Spacer(Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        androidx.compose.material3.Checkbox(
+                            checked = vm.extWarnNoMore,
+                            onCheckedChange = { vm.extWarnNoMore = it },
+                            colors =
+                                androidx.compose.material3.CheckboxDefaults.colors(
+                                    checkedColor = MintDeep,
+                                    checkmarkColor = Color(0xFF04211B),
+                                ),
+                            modifier = Modifier.size(22.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("不再提示（可在设置中重新开启）", fontSize = 12.5.sp, color = TextMid)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { vm.confirmExternal(ctx) },
+                    colors = ButtonDefaults.buttonColors(containerColor = MintDeep, contentColor = Color(0xFF04211B)),
+                ) { Text("打开") }
+            },
+            dismissButton = {
+                TextButton(onClick = { vm.pendingExternalUrl = null }) { Text("取消", color = TextMid) }
+            },
+        )
+    }
+
     // global busy overlay
     if (vm.busy) {
         Box(
@@ -504,20 +592,12 @@ fun HomeScreen(vm: AppViewModel) {
                             val intent =
                                 android.content.Intent(ctx, SitePreviewActivity::class.java)
                                     .putExtra("port", SiteServerService.portOf(site.name) ?: site.port)
+                                    .putExtra("title", site.name)
                             ctx.startActivity(intent)
                         },
                         onBrowser = {
                             val port = SiteServerService.portOf(site.name) ?: site.port
-                            try {
-                                ctx.startActivity(
-                                    android.content.Intent(
-                                        android.content.Intent.ACTION_VIEW,
-                                        Uri.parse("http://127.0.0.1:$port/"),
-                                    ),
-                                )
-                            } catch (e: Exception) {
-                                vm.toast("未找到浏览器")
-                            }
+                            vm.openExternal(ctx, "http://127.0.0.1:$port/")
                         },
                         onCopy = {
                             val port = SiteServerService.portOf(site.name) ?: site.port
@@ -583,7 +663,11 @@ fun HomeScreen(vm: AppViewModel) {
                                     .background(Card0)
                                     .clickable {
                                         vm.showImportSheet = false
-                                        vm.showGuide = true
+                                        ctx.startActivity(
+                                            android.content.Intent(ctx, SitePreviewActivity::class.java)
+                                                .putExtra("mode", "guide")
+                                                .putExtra("title", "站点包格式说明"),
+                                        )
                                     },
                                 contentAlignment = Alignment.Center,
                             ) {
@@ -948,20 +1032,15 @@ fun DetailScreen(vm: AppViewModel) {
                                     GhostButton("预览", Modifier.weight(1f).height(42.dp)) {
                                         ctx.startActivity(
                                             android.content.Intent(ctx, SitePreviewActivity::class.java)
-                                                .putExtra("port", SiteServerService.portOf(site.name) ?: site.port),
+                                                .putExtra("port", SiteServerService.portOf(site.name) ?: site.port)
+                                                .putExtra("title", site.name),
                                         )
                                     }
                                     GhostButton("浏览器", Modifier.weight(1f).height(42.dp)) {
-                                        try {
-                                            ctx.startActivity(
-                                                android.content.Intent(
-                                                    android.content.Intent.ACTION_VIEW,
-                                                    Uri.parse("http://127.0.0.1:${SiteServerService.portOf(site.name) ?: site.port}/"),
-                                                ),
-                                            )
-                                        } catch (e: Exception) {
-                                            vm.toast("未找到浏览器")
-                                        }
+                                        vm.openExternal(
+                                            ctx,
+                                            "http://127.0.0.1:${SiteServerService.portOf(site.name) ?: site.port}/",
+                                        )
                                     }
                                     GhostButton("复制", Modifier.weight(0.7f).height(42.dp)) {
                                         clip.setText(AnnotatedString("http://127.0.0.1:${SiteServerService.portOf(site.name) ?: site.port}/"))
@@ -1050,9 +1129,31 @@ fun DetailScreen(vm: AppViewModel) {
                 modifier = Modifier.fillMaxWidth().clickable(enabled = false) {},
             ) {
                 Column(Modifier.padding(24.dp)) {
-                    Text("更新站点包", color = TextHi, fontSize = 17.sp)
-                    Spacer(Modifier.height(4.dp))
-                    Text("「${vm.detailSite}」的内容将被覆盖，端口与设置保留", color = TextLow, fontSize = 12.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("更新站点包", color = TextHi, fontSize = 17.sp)
+                            Spacer(Modifier.height(4.dp))
+                            Text("「${vm.detailSite}」的内容将被覆盖，端口与设置保留", color = TextLow, fontSize = 12.sp)
+                        }
+                        // guide button: same as import sheet
+                        Box(
+                            Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(Card0)
+                                .clickable {
+                                    vm.showUpdateSheet = false
+                                    ctx.startActivity(
+                                        android.content.Intent(ctx, SitePreviewActivity::class.java)
+                                            .putExtra("mode", "guide")
+                                            .putExtra("title", "站点包格式说明"),
+                                    )
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text("?", fontSize = 16.sp, color = Sky)
+                        }
+                    }
                     Spacer(Modifier.height(16.dp))
                     ImportOption(
                         title = "从本地 ZIP 更新",
@@ -1241,9 +1342,33 @@ fun SettingsScreen(vm: AppViewModel) {
             item {
                 Card(colors = CardDefaults.cardColors(containerColor = Card0), shape = RoundedCornerShape(20.dp)) {
                     Column(Modifier.padding(20.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("外部浏览器确认提示", fontSize = 14.sp, color = TextHi)
+                                Text("跳出应用到外部浏览器前先弹窗确认", fontSize = 11.sp, color = TextLow)
+                            }
+                            Switch(
+                                checked = vm.extWarningOn,
+                                onCheckedChange = {
+                                    SitesRepository.setExtWarningEnabled(ctx, it)
+                                    vm.extWarningOn = it
+                                },
+                                colors =
+                                    SwitchDefaults.colors(
+                                        checkedTrackColor = MintDeep,
+                                        checkedThumbColor = Color(0xFF04211B),
+                                    ),
+                            )
+                        }
+                    }
+                }
+            }
+            item {
+                Card(colors = CardDefaults.cardColors(containerColor = Card0), shape = RoundedCornerShape(20.dp)) {
+                    Column(Modifier.padding(20.dp)) {
                         Text("关于", fontSize = 13.sp, color = TextLow)
                         Spacer(Modifier.height(8.dp))
-                        Text("PocketSite v1.1 · 多站点独立端口", fontSize = 13.sp, color = TextHi)
+                        Text("PocketSite v${vm.appVersion} · 多站点独立端口", fontSize = 13.sp, color = TextHi)
                         Spacer(Modifier.height(4.dp))
                         Text(
                             "每个站点分配独立端口，可同时运行多个站点；" +
@@ -1252,6 +1377,38 @@ fun SettingsScreen(vm: AppViewModel) {
                             color = TextMid,
                             lineHeight = 16.sp,
                         )
+                        Spacer(Modifier.height(12.dp))
+                        // GitHub entry: official mark + highlighted repo path, opens in browser
+                        val ghUrl = "https://github.com/Samge0/PocketSite"
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier =
+                                Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFF182740))
+                                    .clickable { vm.openExternal(ctx, ghUrl) }
+                                    .padding(12.dp, 10.dp),
+                        ) {
+                            androidx.compose.material3.Icon(
+                                imageVector = GithubMark,
+                                contentDescription = "GitHub",
+                                tint = TextHi,
+                                modifier = Modifier.size(22.dp),
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "Samge0/PocketSite",
+                                    fontSize = 13.5.sp,
+                                    color = Sky,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text("github.com · 点击打开仓库主页", fontSize = 10.5.sp, color = TextLow)
+                            }
+                            Text("↗", fontSize = 14.sp, color = TextLow)
+                        }
                     }
                 }
             }
@@ -1274,17 +1431,27 @@ fun GradientButton(
         modifier = modifier,
         shape = RoundedCornerShape(14.dp),
         contentPadding = PaddingValues(horizontal = 10.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent, contentColor = Color(0xFF04211B)),
+        // container itself carries the background (single source), so the disabled
+        // state can't leak a lighter layer through the rounded corners
+        colors =
+            ButtonDefaults.buttonColors(
+                containerColor = if (enabled) Color.Transparent else Color(0xFF2A3A52),
+                contentColor = if (enabled) Color(0xFF04211B) else TextMid,
+            ),
     ) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(
-                    if (enabled) Brush.horizontalGradient(listOf(MintDeep, Mint)) else Brush.horizontalGradient(listOf(Stroke, Stroke)),
-                    RoundedCornerShape(14.dp),
-                ),
-            contentAlignment = Alignment.Center,
-        ) { Text(text, fontSize = 14.sp, maxLines = 1) }
+        if (enabled) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Brush.horizontalGradient(listOf(MintDeep, Mint)), RoundedCornerShape(14.dp)),
+                contentAlignment = Alignment.Center,
+            ) { Text(text, fontSize = 14.sp, maxLines = 1) }
+        } else {
+            Box(
+                Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) { Text(text, fontSize = 14.sp, maxLines = 1) }
+        }
     }
 }
 
